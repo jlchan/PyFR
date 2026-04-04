@@ -40,18 +40,65 @@ class BaseAdvectionDiffusionElements(BaseAdvectionElements):
         # Mesh regions
         regions = self._mesh_regions
 
+        # Allocate separate buffers for gradient variables.
+        #
+        # _grad_vars_upts: cannot reuse scal_upts[uin] because that buffer must
+        # remain intact for flux kernels (tdisf, tdisf_fused) which run
+        # concurrently or later in the same graph.
+        #
+        # _grad_vars_fpts: cannot reuse _scal_fpts because that is still needed
+        # by con_u (common solution for the flux path) and the scal_fpts MPI
+        # exchange.  Writing gradient variables there would corrupt the flux.
+        #
+        # _grad_comm_fpts: cannot reuse _comm_fpts because, when the gradient
+        # variables differ from the conservative variables, the common gradient
+        # variable value and the common conservative value are mathematically
+        # distinct quantities and must live in separate buffers.
+        tags = {'align'}
+        self._grad_vars_upts = backend.matrix(
+            (self.nupts, self.nvars, self.neles),
+            extent=nonce + 'grad_vars_upts', tags=tags
+        )
+        self._grad_vars_fpts = backend.matrix(
+            (self.nfpts, self.nvars, self.neles),
+            extent=nonce + 'grad_vars_fpts', tags=tags
+        )
+        self._grad_comm_fpts = backend.matrix(
+            (self.nfpts, self.nvars, self.neles),
+            extent=nonce + 'grad_comm_fpts', tags=tags
+        )
+
+        # Interpolate gradient variables from solution to flux points.
+        # No uin argument: _grad_vars_upts is a single matrix pre-filled by the
+        # bank-dependent grad_vars kernel before this kernel runs in the graph.
+        kernels['disu_grad'] = lambda: kernel(
+            'mul', self.opmat('M0'), self._grad_vars_upts,
+            out=self._grad_vars_fpts
+        )
+
+        # When |ldg-beta| = 0.5 only one side of each interface is written by
+        # con_grad_u (intconu upwinds entirely to one side), so pre-fill
+        # _grad_comm_fpts from the local _grad_vars_fpts to initialise the
+        # side that con_grad_u skips.
         if abs(self.cfg.getfloat('solver-interfaces', 'ldg-beta')) == 0.5:
             kernels['copy_fpts'] = lambda: kernel(
                 'copy', self._comm_fpts, self._scal_fpts
             )
+            kernels['copy_grad_fpts'] = lambda: kernel(
+                'copy', self._grad_comm_fpts, self._grad_vars_fpts
+            )
 
+        # tgradpcoru_upts reads _grad_vars_upts rather than scal_upts[uin].
+        # It takes no uin argument because _grad_vars_upts is a single matrix
+        # (not a bank list): it is overwritten by grad_vars(uin) earlier in the
+        # same graph, so only one copy is needed — the same pattern as artvisc.
         if self.basis.order > 0:
-            kernels['tgradpcoru_upts'] = lambda uin: kernel(
-                'mul', self.opmat('M4 - M6*M0'), self.scal_upts[uin],
+            kernels['tgradpcoru_upts'] = lambda: kernel(
+                'mul', self.opmat('M4 - M6*M0'), self._grad_vars_upts,
                 out=self._grad_upts
             )
         kernels['tgradcoru_upts'] = lambda: kernel(
-            'mul', self.opmat('M6'), self._comm_fpts,
+            'mul', self.opmat('M6'), self._grad_comm_fpts,
             out=self._grad_upts, beta=float(self.basis.order > 0)
         )
 
@@ -169,3 +216,11 @@ class BaseAdvectionDiffusionElements(BaseAdvectionElements):
     def get_artvisc_fpts_for_inter(self, eidx, fidx):
         nfp = self.nfacefpts[fidx]
         return (self.artvisc.mid,)*nfp, (0,)*nfp, (eidx,)*nfp
+
+    @inters_map
+    def get_grad_vars_fpts_for_inter(self, eidx, fidx):
+        return self._grad_vars_fpts.mid, self._srtd_face_fpts[fidx][eidx]
+
+    @inters_map
+    def get_grad_comm_fpts_for_inter(self, eidx, fidx):
+        return self._grad_comm_fpts.mid, self._srtd_face_fpts[fidx][eidx]
