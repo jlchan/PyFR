@@ -42,6 +42,14 @@ class NavierStokesIntInters(TplargsMixin,
             ulin=self._scal_lhs, urin=self._scal_rhs,
             ulout=self._comm_lhs, urout=self._comm_rhs
         )
+        # Compute the common gradient variable value at internal interfaces.
+        # Uses the same LDG upwinding logic as con_u but reads from
+        # _grad_vars_fpts and writes into _grad_comm_fpts on each side.
+        self.kernels['con_grad_u'] = lambda: self._be.kernel(
+            'intconu', tplargs=self._tplargs, dims=[self.ninterfpts],
+            ulin=self._grad_vars_lhs, urin=self._grad_vars_rhs,
+            ulout=self._grad_comm_lhs, urout=self._grad_comm_rhs
+        )
         self.kernels['comm_flux'] = lambda: self._be.kernel(
             'intcflux', tplargs=self._tplargs, dims=[self.ninterfpts],
             ul=self._scal_lhs, ur=self._scal_rhs,
@@ -63,6 +71,15 @@ class NavierStokesMPIInters(TplargsMixin,
         self.kernels['con_u'] = lambda: self._be.kernel(
             'mpiconu', tplargs=self._tplargs, dims=[self.ninterfpts],
             ulin=self._scal_lhs, urin=self._scal_rhs, ulout=self._comm_lhs
+        )
+        # MPI variant: _grad_vars_lhs holds the local gradient variable values
+        # (already packed and sent to the neighbour in g1); _grad_vars_rhs
+        # holds the received values from the neighbour.  mpiconu applies the
+        # same LDG upwinding and writes the result into _grad_comm_lhs.
+        self.kernels['con_grad_u'] = lambda: self._be.kernel(
+            'mpiconu', tplargs=self._tplargs, dims=[self.ninterfpts],
+            ulin=self._grad_vars_lhs, urin=self._grad_vars_rhs,
+            ulout=self._grad_comm_lhs
         )
         self.kernels['comm_flux'] = lambda: self._be.kernel(
             'mpicflux', tplargs=self._tplargs, dims=[self.ninterfpts],
@@ -90,6 +107,15 @@ class NavierStokesBaseBCInters(TplargsMixin, BaseAdvectionDiffusionBCInters):
             'bcconu', tplargs=self._tplargs, dims=[self.ninterfpts],
             extrns=self._external_args, ulin=self._scal_lhs,
             ulout=self._comm_lhs, nlin=self._pnorm_lhs,
+            **self._external_vals
+        )
+        # BC variant: bcconu computes the ghost state from _grad_vars_fpts
+        # (the interior gradient variable values at the boundary flux pts)
+        # and writes the LDG common value into _grad_comm_lhs.
+        self.kernels['con_grad_u'] = lambda: self._be.kernel(
+            'bcconu', tplargs=self._tplargs, dims=[self.ninterfpts],
+            extrns=self._external_args, ulin=self._grad_vars_lhs,
+            ulout=self._grad_comm_lhs, nlin=self._pnorm_lhs,
             **self._external_vals
         )
         self.kernels['comm_flux'] = lambda: self._be.kernel(

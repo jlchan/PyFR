@@ -47,6 +47,32 @@ class BaseAdvectionDiffusionSystem(BaseAdvectionSystem):
         g1.add_all(k['iint/con_u'], deps=kdeps + k['mpiint/scal_fpts_pack'])
         g1.add_all(k['bcint/con_u'], deps=kdeps)
 
+        # Compute gradient variables at solution points from scal_upts[uin].
+        # Depends on entropy_filter for the same reason disu does: entropy_filter
+        # may modify scal_upts[uin] in-place, so grad_vars must read the
+        # post-filtered state.
+        g1.add_all(k['eles/grad_vars'], deps=k['eles/entropy_filter'])
+
+        # Interpolate gradient variables to flux points (no uin needed since
+        # _grad_vars_upts is a single matrix already filled by grad_vars above)
+        for l in k['eles/disu_grad']:
+            g1.add(l, deps=deps(l, 'eles/grad_vars'))
+
+        # When |ldg-beta| = 0.5 con_grad_u only writes one side of each
+        # interface, so pre-fill _grad_comm_fpts from _grad_vars_fpts first
+        for l in k['eles/copy_grad_fpts']:
+            g1.add(l, deps=deps(l, 'eles/disu_grad'))
+
+        # Compute common gradient variable solution at internal/BC interfaces
+        gvdeps = k['eles/copy_grad_fpts'] or k['eles/disu_grad']
+        g1.add_all(k['iint/con_grad_u'], deps=gvdeps)
+        g1.add_all(k['bcint/con_grad_u'], deps=gvdeps)
+
+        # Pack and send gradient variable flux-point values to MPI neighbours
+        g1.add_all(k['mpiint/grad_fpts_pack'], deps=k['eles/disu_grad'])
+        for send, pack in zip(m['grad_fpts_send'], k['mpiint/grad_fpts_pack']):
+            g1.add_mpi_req(send, deps=[pack])
+
         # Run the shock sensor (if enabled)
         g1.add_all(k['eles/shocksensor'])
         g1.add_all(k['mpiint/artvisc_fpts_pack'], deps=k['eles/shocksensor'])
@@ -56,6 +82,7 @@ class BaseAdvectionDiffusionSystem(BaseAdvectionSystem):
         g2 = self.backend.graph()
         g2.add_mpi_reqs(m['artvisc_fpts_recv'])
         g2.add_mpi_reqs(m['vect_fpts_recv'])
+        g2.add_mpi_reqs(m['grad_fpts_recv'])
 
         # Compute the transformed gradient of the partially corrected solution
         g2.add_all(k['eles/tgradpcoru_upts'])
@@ -71,9 +98,17 @@ class BaseAdvectionDiffusionSystem(BaseAdvectionSystem):
         for l in k['mpiint/comm_entropy']:
             g2.add(l, deps=deps(l, 'mpiint/ent_fpts_unpack'))
 
-        # Compute the transformed gradient of the corrected solution
+        # Unpack received gradient variable values and compute the common
+        # gradient variable solution at MPI interfaces
+        g2.add_all(k['mpiint/grad_fpts_unpack'])
+        for l in k['mpiint/con_grad_u']:
+            g2.add(l, deps=deps(l, 'mpiint/grad_fpts_unpack'))
+
+        # Compute the transformed gradient of the corrected solution.
+        # Depends on con_grad_u (MPI) rather than con_u: tgradcoru_upts now
+        # reads _grad_comm_fpts, which is populated by con_grad_u, not con_u.
         for l in k['eles/tgradcoru_upts']:
-            g2.add(l, deps=deps(l, 'eles/tgradpcoru_upts') + k['mpiint/con_u'])
+            g2.add(l, deps=deps(l, 'eles/tgradpcoru_upts') + k['mpiint/con_grad_u'])
 
         # Obtain the physical gradients at the solution points
         for l in k['eles/gradcoru_upts']:
@@ -84,9 +119,20 @@ class BaseAdvectionDiffusionSystem(BaseAdvectionSystem):
             ldeps = deps(l, 'eles/tgradcoru_upts')
             g2.add(l, deps=ldeps)
 
+        # Apply in-place modification to the physical gradients at solution
+        # points.  Standard path: runs after gradcoru_upts, which has already
+        # converted _grad_upts to physical space.  Fused path (GPU): runs
+        # after tdisf_fused, which converts _grad_upts to physical space as a
+        # side effect; tdisf_fused has already computed the volume flux using
+        # the pre-transform gradients, but gradcoru_fpts and the interface
+        # flux kernels will see the modified values.
+        g2.add_all(k['eles/grad_transform'],
+                   deps=k['eles/gradcoru_upts'] + k['eles/tdisf_fused'])
+
         # Interpolate these gradients to the flux points
         for l in k['eles/gradcoru_fpts']:
-            ldeps = deps(l, 'eles/tdisf_fused', 'eles/gradcoru_upts')
+            ldeps = (k['eles/grad_transform'] or
+                     deps(l, 'eles/tdisf_fused', 'eles/gradcoru_upts'))
             g2.add(l, deps=ldeps)
 
         # Set dependencies for interface flux interpolation

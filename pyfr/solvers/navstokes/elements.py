@@ -31,12 +31,45 @@ class NavierStokesElements(BaseFluidElements, BaseAdvectionDiffusionElements):
     def set_backend(self, *args, **kwargs):
         super().set_backend(*args, **kwargs)
 
+        kprefix = 'pyfr.solvers.navstokes.kernels'
+
+        # Register and set up the gradient variable transformation kernel.
+        # This runs before tgradpcoru_upts and disu_grad in the RHS graph,
+        # populating _grad_vars_upts from scal_upts[uin].  The lambda takes
+        # uin so the system creates one kernel instance per solution bank,
+        # matching the bank currently being evaluated.  _grad_vars_upts itself
+        # is a single matrix (not a bank list) that is overwritten each time,
+        # so tgradpcoru_upts and disu_grad need no uin argument.
+        self._be.pointwise.register(f'{kprefix}.grad_vars')
+
+        tplargs_gv = {'ndims': self.ndims, 'nvars': self.nvars}
+
+        self.kernels['grad_vars'] = lambda uin: self._be.kernel(
+            'grad_vars', tplargs=tplargs_gv,
+            dims=[self.nupts, self.neles],
+            u=self.scal_upts[uin], v=self._grad_vars_upts
+        )
+
+        # Register the kernel that modifies the corrected physical gradients at
+        # solution points in-place before they are used by the viscous flux and
+        # interface flux kernels.  The default implementation is the identity.
+        # _grad_upts has shape (ndims*nupts, nvars, neles); the kernel sees each
+        # (upt, ele) pair as gradu[ndims][nvars], matching the gradcoru layout.
+        self._be.pointwise.register(f'{kprefix}.grad_transform')
+
+        tplargs_gt = {'ndims': self.ndims, 'nvars': self.nvars}
+
+        self.kernels['grad_transform'] = lambda: self._be.kernel(
+            'grad_transform', tplargs=tplargs_gt,
+            dims=[self.nupts, self.neles],
+            gradu=self._grad_upts
+        )
+
         # Can elide interior flux calculations at p = 0
         if self.basis.order == 0:
             return
 
         # Register our flux kernels
-        kprefix = 'pyfr.solvers.navstokes.kernels'
         self._be.pointwise.register(f'{kprefix}.tflux')
 
         # Handle shock capturing and Sutherland's law

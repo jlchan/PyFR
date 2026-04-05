@@ -14,6 +14,15 @@ class BaseAdvectionDiffusionIntInters(BaseAdvectionIntInters):
         self._comm_lhs = self._scal_view(lhs, 'get_comm_fpts_for_inter')
         self._comm_rhs = self._scal_view(rhs, 'get_comm_fpts_for_inter')
 
+        # Views into gradient variable buffers: _grad_vars_fpts are the inputs
+        # to con_grad_u (local interior gradient variable values at flux pts);
+        # _grad_comm_fpts are the outputs (the agreed common values written back
+        # into each element's _grad_comm_fpts for use by tgradcoru_upts).
+        self._grad_vars_lhs = self._scal_view(lhs, 'get_grad_vars_fpts_for_inter')
+        self._grad_vars_rhs = self._scal_view(rhs, 'get_grad_vars_fpts_for_inter')
+        self._grad_comm_lhs = self._scal_view(lhs, 'get_grad_comm_fpts_for_inter')
+        self._grad_comm_rhs = self._scal_view(rhs, 'get_grad_comm_fpts_for_inter')
+
         # Generate the additional view matrices for artificial viscosity
         if cfg.get('solver', 'shock-capturing') == 'artificial-viscosity':
             self._artvisc_lhs = self._view(lhs, 'get_artvisc_fpts_for_inter')
@@ -51,6 +60,35 @@ class BaseAdvectionDiffusionMPIInters(BaseAdvectionMPIInters):
 
         # Additional kernel constants
         self.c |= cfg.items_as('solver-interfaces', float)
+
+        # Gradient variable exchange: _grad_vars_lhs is packed and sent so the
+        # neighbour partition has the local interior gradient variable values;
+        # _grad_vars_rhs receives the neighbour's values.  con_grad_u then
+        # uses both to compute _grad_comm_lhs (the common gradient variable
+        # value written into this partition's _grad_comm_fpts).
+        grad_fpts_tag = next(self._mpi_tag_counter)
+
+        self._grad_vars_lhs = self._scal_xchg_view(
+            lhs, 'get_grad_vars_fpts_for_inter'
+        )
+        self._grad_vars_rhs = be.xchg_matrix_for_view(self._grad_vars_lhs)
+        self._grad_comm_lhs = self._scal_view(
+            lhs, 'get_grad_comm_fpts_for_inter'
+        )
+
+        self.kernels['grad_fpts_pack'] = lambda: be.kernel(
+            'pack', self._grad_vars_lhs
+        )
+        self.kernels['grad_fpts_unpack'] = lambda: be.kernel(
+            'unpack', self._grad_vars_rhs
+        )
+
+        self.mpireqs['grad_fpts_send'] = lambda: self._grad_vars_lhs.sendreq(
+            self._rhsrank, grad_fpts_tag
+        )
+        self.mpireqs['grad_fpts_recv'] = lambda: self._grad_vars_rhs.recvreq(
+            self._rhsrank, grad_fpts_tag
+        )
 
         # We require cflux(l,r,n_l) = -cflux(r,l,n_r) and
         # conu(l,r) = conu(r,l) and where l and r are left and right
@@ -127,6 +165,11 @@ class BaseAdvectionDiffusionBCInters(BaseAdvectionBCInters):
 
         # Additional kernel constants
         self.c |= cfg.items_as('solver-interfaces', float)
+
+        # Views for gradient variable common solution at boundary interfaces.
+        # Only a LHS is needed (BCs have no RHS element).
+        self._grad_vars_lhs = self._scal_view(lhs, 'get_grad_vars_fpts_for_inter')
+        self._grad_comm_lhs = self._scal_view(lhs, 'get_grad_comm_fpts_for_inter')
 
         # Generate the additional view matrices for artificial viscosity
         if cfg.get('solver', 'shock-capturing') == 'artificial-viscosity':
