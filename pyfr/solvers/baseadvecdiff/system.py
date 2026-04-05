@@ -119,9 +119,20 @@ class BaseAdvectionDiffusionSystem(BaseAdvectionSystem):
             ldeps = deps(l, 'eles/tgradcoru_upts')
             g2.add(l, deps=ldeps)
 
+        # Apply in-place modification to the physical gradients at solution
+        # points.  Standard path: runs after gradcoru_upts, which has already
+        # converted _grad_upts to physical space.  Fused path (GPU): runs
+        # after tdisf_fused, which converts _grad_upts to physical space as a
+        # side effect; tdisf_fused has already computed the volume flux using
+        # the pre-transform gradients, but gradcoru_fpts and the interface
+        # flux kernels will see the modified values.
+        g2.add_all(k['eles/grad_transform'],
+                   deps=k['eles/gradcoru_upts'] + k['eles/tdisf_fused'])
+
         # Interpolate these gradients to the flux points
         for l in k['eles/gradcoru_fpts']:
-            ldeps = deps(l, 'eles/tdisf_fused', 'eles/gradcoru_upts')
+            ldeps = (k['eles/grad_transform'] or
+                     deps(l, 'eles/tdisf_fused', 'eles/gradcoru_upts'))
             g2.add(l, deps=ldeps)
 
         # Set dependencies for interface flux interpolation

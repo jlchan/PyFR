@@ -50,6 +50,21 @@ class NavierStokesElements(BaseFluidElements, BaseAdvectionDiffusionElements):
             u=self.scal_upts[uin], v=self._grad_vars_upts
         )
 
+        # Register the kernel that modifies the corrected physical gradients at
+        # solution points in-place before they are used by the viscous flux and
+        # interface flux kernels.  The default implementation is the identity.
+        # _grad_upts has shape (ndims*nupts, nvars, neles); the kernel sees each
+        # (upt, ele) pair as gradu[ndims][nvars], matching the gradcoru layout.
+        self._be.pointwise.register(f'{kprefix}.grad_transform')
+
+        tplargs_gt = {'ndims': self.ndims, 'nvars': self.nvars}
+
+        self.kernels['grad_transform'] = lambda: self._be.kernel(
+            'grad_transform', tplargs=tplargs_gt,
+            dims=[self.nupts, self.neles],
+            gradu=self._grad_upts
+        )
+
         # Can elide interior flux calculations at p = 0
         if self.basis.order == 0:
             return
