@@ -192,7 +192,8 @@ class BaseElements:
         self._be = backend
 
         # If we are doing gradient fusion
-        self.grad_fusion = not (self._be.blocks or 'flux' in self.antialias)
+        ## self.grad_fusion = not (self._be.blocks or 'flux' in self.antialias)
+        self.grad_fusion = False; ## TODO remove later
 
         if self.basis.order >= 2:
             self._linoff = linoff - linoff % -backend.csubsz
