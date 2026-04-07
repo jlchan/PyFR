@@ -6,11 +6,16 @@
               urin='in view fpdtype_t[${str(nvars)}]'
               ulout='out view fpdtype_t[${str(nvars)}]'
               urout='out view fpdtype_t[${str(nvars)}]'>
+
+## expand macro for entropy variable transform
+
 % for i in range(nvars):
 % if c['ldg-beta'] == -0.5:
-    urout[${i}] = ulin[${i}];
+    ## urout[${i}] = ulin[${i}];
+    urout[${i}] = ulout[${i}] = ulin[${i}];
 % elif c['ldg-beta'] == 0.5:
-    ulout[${i}] = urin[${i}];
+    ## ulout[${i}] = urin[${i}];
+    ulout[${i}] = urout[${i}] = urin[${i}];
 % else:
     ulout[${i}] = urout[${i}] = urin[${i}]*${0.5 + c['ldg-beta']}
                               + ulin[${i}]*${0.5 - c['ldg-beta']};

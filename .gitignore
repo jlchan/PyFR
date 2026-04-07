@@ -23,3 +23,9 @@ doc/build/
 
 # Hidden files
 .*
+
+libxsmm
+
+pyfr-venv
+
+PyFR-Test-Cases
