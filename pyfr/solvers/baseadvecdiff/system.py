@@ -121,6 +121,10 @@ class BaseAdvectionDiffusionSystem(BaseAdvectionSystem):
         for l in k['eles/gradcoru_upts']:
             g_grad_flux.add(l, deps=deps(l, 'eles/tgradcoru_upts'))
 
+        # Optional NS-only gradient hook (in-place between gradcoru_upts and faces)
+        for l in k['eles/grad_hook_upts']:
+            g_grad_flux.add(l, deps=deps(l, 'eles/gradcoru_upts'))
+
         # Compute the fused transformed flux and corrected gradient
         # (depends on avfill when AV is active — empty list otherwise)
         for l in k['eles/tdisf_fused']:
@@ -128,8 +132,9 @@ class BaseAdvectionDiffusionSystem(BaseAdvectionSystem):
             g_grad_flux.add(l, deps=ldeps)
 
         # Interpolate these gradients to the flux points
+        _gh = 'eles/grad_hook_upts' if k['eles/grad_hook_upts'] else 'eles/gradcoru_upts'
         for l in k['eles/gradcoru_fpts']:
-            ldeps = deps(l, 'eles/tdisf_fused', 'eles/gradcoru_upts')
+            ldeps = deps(l, 'eles/tdisf_fused', _gh)
             g_grad_flux.add(l, deps=ldeps)
 
         # Set dependencies for interface flux interpolation
@@ -172,12 +177,21 @@ class BaseAdvectionDiffusionSystem(BaseAdvectionSystem):
             d = deps(l, 'eles/tdisf', 'eles/tdisf_fused')
             g_grad_flux.add(l, deps=d)
 
-        kgroup = [
-            k['eles/tgradpcoru_upts'], k['eles/tgradcoru_upts'],
-            k['eles/gradcoru_upts'], k['eles/tdisf_fused'],
-            k['eles/gradcoru_fpts'], k['eles/gradcoru_qpts'],
-            k['eles/qptsu'], k['eles/tdisf'], k['eles/tdivtpcorf']
-        ]
+        if k['eles/grad_hook_upts']:
+            kgroup = [
+                k['eles/tgradpcoru_upts'], k['eles/tgradcoru_upts'],
+                k['eles/gradcoru_upts'], k['eles/grad_hook_upts'],
+                k['eles/tdisf_fused'],
+                k['eles/gradcoru_fpts'], k['eles/gradcoru_qpts'],
+                k['eles/qptsu'], k['eles/tdisf'], k['eles/tdivtpcorf']
+            ]
+        else:
+            kgroup = [
+                k['eles/tgradpcoru_upts'], k['eles/tgradcoru_upts'],
+                k['eles/gradcoru_upts'], k['eles/tdisf_fused'],
+                k['eles/gradcoru_fpts'], k['eles/gradcoru_qpts'],
+                k['eles/qptsu'], k['eles/tdisf'], k['eles/tdivtpcorf']
+            ]
         for ks in zip_longest(*kgroup):
             # Flux-AA on; inputs to tdisf and tdivtpcorf are from quad pts
             if k['eles/qptsu']:
@@ -195,6 +209,12 @@ class BaseAdvectionDiffusionSystem(BaseAdvectionSystem):
                     [(ks[3], 'f'), (ks[8], 'b')],
                 ]
             # No flux-AA and no gradient fusion
+            elif k['eles/grad_hook_upts']:
+                subs = [
+                    [(ks[0], 'out'), (ks[1], 'out'), (ks[2], 'gradu'),
+                     (ks[3], 'gradu'), (ks[5], 'b'), (ks[8], 'f'),
+                     (ks[9], 'b')],
+                ]
             else:
                 subs = [
                     [(ks[0], 'out'), (ks[1], 'out'), (ks[2], 'gradu'),

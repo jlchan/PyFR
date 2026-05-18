@@ -60,6 +60,33 @@ class NavierStokesElements(BaseFluidElements, BaseAdvectionDiffusionElements):
         # Helpers
         r, s = self.mesh_regions, self._slice_mat
 
+        # Optional debug: scale physical ∇U after gradcoru (grad_fusion off only)
+        if (self.cfg.hasopt('solver-debug', 'grad-hook') and
+                self.cfg.get('solver-debug', 'grad-hook') == 'scale-two' and
+                not self.grad_fusion and 'flux' not in self.antialias):
+            self._be.pointwise.register(f'{kprefix}.gradhook')
+            tplargs_gh = {
+                'ndims': self.ndims,
+                'nvars': self.nvars,
+                'debug_grad_hook': True,
+                'scale': 2.0,
+            }
+            gradhook_u = []
+            for rgn in ('curved', 'linear'):
+                if rgn not in r:
+                    continue
+
+                gradhook_u.append(lambda rgn=rgn: self._be.kernel(
+                    'gradhook', tplargs=tplargs_gh,
+                    dims=[self.nupts, r[rgn]],
+                    gradu=s(self._grad_upts, rgn),
+                ))
+
+            if gradhook_u:
+                self.kernels['grad_hook_upts'] = (
+                    lambda: self._make_sliced_kernel(k() for k in gradhook_u)
+                )
+
         # Mode-dependent setup
         if self.grad_fusion:
             pts, fused = 'upts', True
