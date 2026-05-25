@@ -1,14 +1,10 @@
 #!/usr/bin/env python3
-"""One-off check that [solver-debug] grad-hook scales ∇U by 2 on the RHS path.
+"""Compare one viscous RHS: conservative vs entropy (plumbing, V = U).
 
     python gradhook_scale_demo.py
 
-Expect stderr lines like:
-    [pyfr.gradhook] before gradu[0][0]=...
-    [pyfr.gradhook] after  gradu[0][0]=...   (≈ 2× the before value)
-
+Expect max |dU/dt_cons - dU/dt_ent| ~ machine epsilon (alpha=1 identity path).
 Uses PyFR-Test-Cases/2d-couette-flow (repo submodule or ../PyFR-Test-Cases).
-OpenMP + gcc-15 as in couette-flow.ini.
 """
 
 from __future__ import annotations
@@ -18,6 +14,7 @@ import sys
 import tempfile
 from pathlib import Path
 
+import numpy as np
 from mpi4py import MPI
 
 from pyfr.backends import get_backend
@@ -37,6 +34,22 @@ def _couette_dir(root: Path) -> Path | None:
     return None
 
 
+def _rhs_out(cfg_path: Path, pyfrm: Path, gradvars: str) -> np.ndarray:
+    cfg = Inifile.load(str(cfg_path))
+    cfg.set('solver', 'gradient-variables', gradvars)
+    if Path(GCC15_CC).is_file():
+        cfg.set('backend-openmp', 'cc', GCC15_CC)
+
+    backend = get_backend('openmp', cfg)
+    mesh = NativeReader(pyfrm).mesh
+    integrator = get_solver(backend, mesh, None, cfg)
+
+    uin, fout = 0, 1
+    integrator.system.rhs(0.0, uin, fout)
+
+    return np.concatenate(integrator.system.ele_scal_upts(fout), axis=-1)
+
+
 def main() -> int:
     if not MPI.Is_initialized():
         init_mpi()
@@ -52,9 +65,7 @@ def main() -> int:
         print(f'Missing mesh {msh}', file=sys.stderr)
         return 1
 
-    if not Path(GCC15_CC).is_file():
-        print(f'Missing compiler {GCC15_CC}', file=sys.stderr)
-        return 1
+    ini = tc / 'couette-flow.ini'
 
     with tempfile.TemporaryDirectory() as tmp:
         pyfrm = Path(tmp) / 'mesh.pyfrm'
@@ -63,18 +74,19 @@ def main() -> int:
             check=True,
         )
 
-        cfg = Inifile.load(str(tc / 'couette-flow.ini'))
-        cfg.set('solver-debug', 'grad-hook', 'scale-two')
-        cfg.set('backend-openmp', 'cc', GCC15_CC)
+        print('Running one RHS (conservative gradients)…', flush=True)
+        out_cons = _rhs_out(ini, pyfrm, 'conservative')
 
-        backend = get_backend('openmp', cfg)
-        mesh = NativeReader(pyfrm).mesh
-        integrator = get_solver(backend, mesh, None, cfg)
+        print('Running one RHS (entropy gradients, V=U plumbing)…', flush=True)
+        out_ent = _rhs_out(ini, pyfrm, 'entropy')
 
-        print('Running one RHS (grad-hook ×2 active)…', flush=True)
-        integrator.system.rhs(0.0, 0, 0)
+    err = np.max(np.abs(out_cons - out_ent))
+    print(f'max |dU/dt_cons - dU/dt_ent| = {err:.6e}', flush=True)
+    if not np.allclose(out_cons, out_ent, rtol=0.0, atol=1e-10):
+        print('FAIL: entropy path does not match conservative', file=sys.stderr)
+        return 1
 
-    print('Done — see stderr above for [pyfr.gradhook] before/after.', flush=True)
+    print('PASS: entropy plumbing (V=U) matches conservative.', flush=True)
     return 0
 
 

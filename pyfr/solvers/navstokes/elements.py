@@ -8,6 +8,8 @@ class NavierStokesElements(BaseFluidElements, BaseAdvectionDiffusionElements):
     # Use the density field for shock sensing
     shockvar = 'rho'
 
+    _GRADIENT_VARIABLES = {'conservative', 'entropy'}
+
     @staticmethod
     def grad_con_to_pri(cons, grad_cons, cfg):
         rho, *rhouvw = cons[:-1]
@@ -28,13 +30,56 @@ class NavierStokesElements(BaseFluidElements, BaseAdvectionDiffusionElements):
 
         return [grad_rho, *grad_uvw, grad_p]
 
-    def set_backend(self, *args, **kwargs):
-        super().set_backend(*args, **kwargs)
+    def _entropy_gradients_enabled(self):
+        return self._gradient_variables == 'entropy'
+
+    def grad_field_upts(self, uin):
+        if self._entropy_gradients_enabled():
+            return self._ent_upts
+        return super().grad_field_upts(uin)
+
+    def grad_field_fpts(self):
+        if self._entropy_gradients_enabled():
+            return self._ent_comm_fpts
+        return super().grad_field_fpts()
+
+    def set_backend(self, backend, nonce, linoff):
+        gradvars = self.cfg.get('solver', 'gradient-variables', 'conservative')
+        if gradvars not in self._GRADIENT_VARIABLES:
+            raise ValueError(
+                'Invalid gradient-variables option '
+                f'{gradvars!r}; expected one of '
+                f'{sorted(self._GRADIENT_VARIABLES)}'
+            )
+        self._gradient_variables = gradvars
+
+        super().set_backend(backend, nonce, linoff)
 
         # Can elide interior flux calculations at p = 0
         if self.basis.order == 0:
             return
 
+        if self._entropy_gradients_enabled():
+            if self.grad_fusion:
+                raise ValueError(
+                    'gradient-variables = entropy is incompatible with '
+                    'gradient fusion (disable flux anti-aliasing and use a '
+                    'non-block backend)'
+                )
+            if 'flux' in self.antialias:
+                raise ValueError(
+                    'gradient-variables = entropy is incompatible with flux '
+                    'anti-aliasing'
+                )
+
+            self._ent_upts = backend.matrix(
+                (self.nupts, self.nvars, self.neles),
+                extent=nonce + 'ent_upts', tags={'align'}
+            )
+            self._ent_comm_fpts = backend.matrix(
+                (self.nfpts, self.nvars, self.neles),
+                extent=nonce + 'ent_comm_fpts', tags={'align'}
+            )
         # Register our flux kernels
         kprefix = 'pyfr.solvers.navstokes.kernels'
         self._be.pointwise.register(f'{kprefix}.tflux')
@@ -59,33 +104,69 @@ class NavierStokesElements(BaseFluidElements, BaseAdvectionDiffusionElements):
 
         # Helpers
         r, s = self.mesh_regions, self._slice_mat
+        kernel = self._be.kernel
 
-        # Optional debug: scale physical ∇U after gradcoru (grad_fusion off only)
-        if (self.cfg.hasopt('solver-debug', 'grad-hook') and
-                self.cfg.get('solver-debug', 'grad-hook') == 'scale-two' and
-                not self.grad_fusion and 'flux' not in self.antialias):
+        if self._entropy_gradients_enabled():
+            self._be.pointwise.register(f'{kprefix}.con_to_ent')
             self._be.pointwise.register(f'{kprefix}.gradhook')
+
+            ent_tplargs = {'ndims': self.ndims, 'nvars': self.nvars}
+            ent_u = []
+            for rgn in ('curved', 'linear'):
+                if rgn not in r:
+                    continue
+                ent_u.append((rgn, r[rgn]))
+
+            if ent_u:
+                def con_to_ent_upts(uin):
+                    return self._make_sliced_kernel(
+                        self._be.kernel(
+                            'con_to_ent', tplargs=ent_tplargs,
+                            dims=[self.nupts, n],
+                            uin=s(self.scal_upts[uin], rgn),
+                            vout=s(self._ent_upts, rgn),
+                        )
+                        for rgn, n in ent_u
+                    )
+
+                self.kernels['con_to_ent_upts'] = con_to_ent_upts
+
+            self.kernels['seed_ent_comm_fpts'] = lambda: kernel(
+                'copy', self._ent_comm_fpts, self._comm_fpts
+            )
+
+            def con_to_ent_comm():
+                return kernel(
+                    'con_to_ent', tplargs=ent_tplargs,
+                    dims=[self.nfpts, self.neles],
+                    uin=self._ent_comm_fpts,
+                    vout=self._ent_comm_fpts,
+                )
+
+            self.kernels['con_to_ent_comm'] = con_to_ent_comm
+
             tplargs_gh = {
                 'ndims': self.ndims,
                 'nvars': self.nvars,
-                'debug_grad_hook': True,
-                'scale': 2.0,
             }
             gradhook_u = []
             for rgn in ('curved', 'linear'):
                 if rgn not in r:
                     continue
-
-                gradhook_u.append(lambda rgn=rgn: self._be.kernel(
-                    'gradhook', tplargs=tplargs_gh,
-                    dims=[self.nupts, r[rgn]],
-                    gradu=s(self._grad_upts, rgn),
-                ))
+                gradhook_u.append((rgn, r[rgn]))
 
             if gradhook_u:
-                self.kernels['grad_hook_upts'] = (
-                    lambda: self._make_sliced_kernel(k() for k in gradhook_u)
-                )
+                def grad_hook_upts(uin):
+                    return self._make_sliced_kernel(
+                        self._be.kernel(
+                            'gradhook', tplargs=tplargs_gh,
+                            dims=[self.nupts, n],
+                            gradu=s(self._grad_upts, rgn),
+                        )
+                        for rgn, n in gradhook_u
+                    )
+
+                self.kernels['grad_hook_upts'] = grad_hook_upts
 
         # Mode-dependent setup
         if self.grad_fusion:

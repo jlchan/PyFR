@@ -81,7 +81,6 @@ class BaseAdvectionDiffusionSystem(BaseAdvectionSystem):
         # Make a copy of the solution (if used by source terms)
         g_soln.add_all(k['eles/copy_soln'], deps=k['eles/entropy_filter'])
 
-        # Compute the common solution at our internal/boundary interfaces
         for l in k['eles/copy_fpts']:
             g_soln.add(l, deps=deps(l, 'eles/disu'))
         kdeps = k['eles/copy_fpts'] or k['eles/disu']
@@ -109,12 +108,30 @@ class BaseAdvectionDiffusionSystem(BaseAdvectionSystem):
         elif self._ef:
             self._ef.add_to_graph_post_recv(g_grad_flux, k, deps)
 
+        # Entropy-variable path: U -> V before gradient operators
+        for l in k['eles/con_to_ent_upts']:
+            g_grad_flux.add(l)
+
         # Compute the transformed gradient of the partially corrected solution
-        g_grad_flux.add_all(k['eles/tgradpcoru_upts'])
+        if k['eles/con_to_ent_upts']:
+            for l in k['eles/tgradpcoru_upts']:
+                g_grad_flux.add(l, deps=deps(l, 'eles/con_to_ent_upts'))
+        else:
+            g_grad_flux.add_all(k['eles/tgradpcoru_upts'])
+
+        # Entropy face path: copy comm U then V(U) before M6
+        for l in k['eles/seed_ent_comm_fpts']:
+            g_grad_flux.add(l, deps=k['mpiint/con_u'])
+
+        for l in k['eles/con_to_ent_comm']:
+            g_grad_flux.add(l, deps=k['eles/seed_ent_comm_fpts'])
 
         # Compute the transformed gradient of the corrected solution
         for l in k['eles/tgradcoru_upts']:
-            d = deps(l, 'eles/tgradpcoru_upts') + k['mpiint/con_u']
+            if k['eles/con_to_ent_comm']:
+                d = deps(l, 'eles/tgradpcoru_upts') + k['eles/con_to_ent_comm']
+            else:
+                d = deps(l, 'eles/tgradpcoru_upts') + k['mpiint/con_u']
             g_grad_flux.add(l, deps=d)
 
         # Obtain the physical gradients at the solution points
@@ -177,21 +194,12 @@ class BaseAdvectionDiffusionSystem(BaseAdvectionSystem):
             d = deps(l, 'eles/tdisf', 'eles/tdisf_fused')
             g_grad_flux.add(l, deps=d)
 
-        if k['eles/grad_hook_upts']:
-            kgroup = [
-                k['eles/tgradpcoru_upts'], k['eles/tgradcoru_upts'],
-                k['eles/gradcoru_upts'], k['eles/grad_hook_upts'],
-                k['eles/tdisf_fused'],
-                k['eles/gradcoru_fpts'], k['eles/gradcoru_qpts'],
-                k['eles/qptsu'], k['eles/tdisf'], k['eles/tdivtpcorf']
-            ]
-        else:
-            kgroup = [
-                k['eles/tgradpcoru_upts'], k['eles/tgradcoru_upts'],
-                k['eles/gradcoru_upts'], k['eles/tdisf_fused'],
-                k['eles/gradcoru_fpts'], k['eles/gradcoru_qpts'],
-                k['eles/qptsu'], k['eles/tdisf'], k['eles/tdivtpcorf']
-            ]
+        kgroup = [
+            k['eles/tgradpcoru_upts'], k['eles/tgradcoru_upts'],
+            k['eles/gradcoru_upts'], k['eles/tdisf_fused'],
+            k['eles/gradcoru_fpts'], k['eles/gradcoru_qpts'],
+            k['eles/qptsu'], k['eles/tdisf'], k['eles/tdivtpcorf']
+        ]
         for ks in zip_longest(*kgroup):
             # Flux-AA on; inputs to tdisf and tdivtpcorf are from quad pts
             if k['eles/qptsu']:
@@ -209,19 +217,15 @@ class BaseAdvectionDiffusionSystem(BaseAdvectionSystem):
                     [(ks[3], 'f'), (ks[8], 'b')],
                 ]
             # No flux-AA and no gradient fusion
-            elif k['eles/grad_hook_upts']:
-                subs = [
-                    [(ks[0], 'out'), (ks[1], 'out'), (ks[2], 'gradu'),
-                     (ks[3], 'gradu'), (ks[5], 'b'), (ks[8], 'f'),
-                     (ks[9], 'b')],
-                ]
             else:
                 subs = [
                     [(ks[0], 'out'), (ks[1], 'out'), (ks[2], 'gradu'),
                      (ks[4], 'b'), (ks[7], 'f'), (ks[8], 'b')],
                 ]
 
-            self._group(g_grad_flux, ks, subs=subs)
+            # OpenMP kernel fusion is incompatible with the entropy grad hook
+            if not k['eles/grad_hook_upts']:
+                self._group(g_grad_flux, ks, subs=subs)
 
         g_grad_flux.commit()
 

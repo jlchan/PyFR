@@ -3,6 +3,12 @@ from pyfr.solvers.baseadvec import BaseAdvectionElements
 
 
 class BaseAdvectionDiffusionElements(BaseAdvectionElements):
+    def grad_field_upts(self, uin):
+        return self.scal_upts[uin]
+
+    def grad_field_fpts(self):
+        return self._comm_fpts
+
     @property
     def _scratch_bufs(self):
         bufs = {'scal_fpts', 'vect_fpts', 'vect_upts'}
@@ -46,11 +52,11 @@ class BaseAdvectionDiffusionElements(BaseAdvectionElements):
 
         if self.basis.order > 0:
             kernels['tgradpcoru_upts'] = lambda uin: kernel(
-                'mul', self.opmat('M4 - M6*M0'), self.scal_upts[uin],
+                'mul', self.opmat('M4 - M6*M0'), self.grad_field_upts(uin),
                 out=self._grad_upts
             )
         kernels['tgradcoru_upts'] = lambda: kernel(
-            'mul', self.opmat('M6'), self._comm_fpts,
+            'mul', self.opmat('M6'), self.grad_field_fpts(),
             out=self._grad_upts, beta=float(self.basis.order > 0)
         )
 
