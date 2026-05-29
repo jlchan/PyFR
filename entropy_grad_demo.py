@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Compare one viscous RHS: conservative vs entropy-gradient plumbing.
 
-    python gradhook_scale_demo.py
+    python entropy_grad_demo.py
 
-Expect max |dU/dt_cons - dU/dt_ent| ~ machine epsilon when
-con_to_ent and gradhook are exact inverses.
+Reports the relative error max|cons - ent| / max|dU/dt|; expect it near
+the double-precision floor (~1e-14) when con_to_ent and ent_to_con_grad
+are exact inverses, regardless of the scaling constant used.
 Uses PyFR-Test-Cases/2d-couette-flow (repo submodule or ../PyFR-Test-Cases).
 """
 
@@ -81,9 +82,17 @@ def main() -> int:
         print('Running one RHS (entropy-gradient plumbing)…', flush=True)
         out_ent = _rhs_out(ini, pyfrm, 'entropy')
 
-    err = np.max(np.abs(out_cons - out_ent))
-    print(f'max |dU/dt_cons - dU/dt_ent| = {err:.6e}', flush=True)
-    if not np.allclose(out_cons, out_ent, rtol=0.0, atol=5e-9):
+    # Use a relative metric: the absolute difference scales with the
+    # magnitude of dU/dt (largest in the energy equation), so a non
+    # power-of-two scaling leaves an O(eps) relative drift that looks
+    # large in absolute terms. Relative error reflects true accuracy.
+    rtol = 1e-12
+    abs_err = np.max(np.abs(out_cons - out_ent))
+    scale = max(np.max(np.abs(out_cons)), np.max(np.abs(out_ent)), 1e-300)
+    rel_err = abs_err / scale
+    print(f'max |dU/dt_cons - dU/dt_ent| / max|dU/dt| = {rel_err:.6e}',
+          flush=True)
+    if rel_err > rtol:
         print('FAIL: entropy path does not match conservative', file=sys.stderr)
         return 1
 

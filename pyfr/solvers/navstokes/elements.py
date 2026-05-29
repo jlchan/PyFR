@@ -112,7 +112,7 @@ class NavierStokesElements(BaseFluidElements, BaseAdvectionDiffusionElements):
 
         if self._entropy_gradients_enabled():
             self._be.pointwise.register(f'{kprefix}.con_to_ent')
-            self._be.pointwise.register(f'{kprefix}.gradhook')
+            self._be.pointwise.register(f'{kprefix}.ent_to_con_grad')
 
             ent_tplargs = {'ndims': self.ndims, 'nvars': self.nvars}
             ent_u = []
@@ -135,28 +135,28 @@ class NavierStokesElements(BaseFluidElements, BaseAdvectionDiffusionElements):
 
                 self.kernels['con_to_ent_upts'] = con_to_ent_upts
 
-            tplargs_gh = {
+            tplargs_e2c = {
                 'ndims': self.ndims,
                 'nvars': self.nvars,
             }
-            gradhook_u = []
+            ent_to_con_grad_u = []
             for rgn in ('curved', 'linear'):
                 if rgn not in r:
                     continue
-                gradhook_u.append((rgn, r[rgn]))
+                ent_to_con_grad_u.append((rgn, r[rgn]))
 
-            if gradhook_u:
-                def grad_hook_upts(uin):
+            if ent_to_con_grad_u:
+                def ent_to_con_grad_upts(uin):
                     return self._make_sliced_kernel(
                         self._be.kernel(
-                            'gradhook', tplargs=tplargs_gh,
+                            'ent_to_con_grad', tplargs=tplargs_e2c,
                             dims=[self.nupts, n],
                             gradu=s(self._grad_upts, rgn),
                         )
-                        for rgn, n in gradhook_u
+                        for rgn, n in ent_to_con_grad_u
                     )
 
-                self.kernels['grad_hook_upts'] = grad_hook_upts
+                self.kernels['ent_to_con_grad_upts'] = ent_to_con_grad_upts
 
         # Mode-dependent setup
         if self.grad_fusion:

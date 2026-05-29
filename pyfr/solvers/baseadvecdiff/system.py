@@ -128,8 +128,8 @@ class BaseAdvectionDiffusionSystem(BaseAdvectionSystem):
         for l in k['eles/gradcoru_upts']:
             g_grad_flux.add(l, deps=deps(l, 'eles/tgradcoru_upts'))
 
-        # Optional NS-only gradient hook (in-place between gradcoru_upts and faces)
-        for l in k['eles/grad_hook_upts']:
+        # Optional NS-only gradient transform (in-place between gradcoru_upts and faces)
+        for l in k['eles/ent_to_con_grad_upts']:
             g_grad_flux.add(l, deps=deps(l, 'eles/gradcoru_upts'))
 
         # Compute the fused transformed flux and corrected gradient
@@ -139,7 +139,8 @@ class BaseAdvectionDiffusionSystem(BaseAdvectionSystem):
             g_grad_flux.add(l, deps=ldeps)
 
         # Interpolate these gradients to the flux points
-        _gh = 'eles/grad_hook_upts' if k['eles/grad_hook_upts'] else 'eles/gradcoru_upts'
+        _gh = ('eles/ent_to_con_grad_upts' if k['eles/ent_to_con_grad_upts']
+               else 'eles/gradcoru_upts')
         for l in k['eles/gradcoru_fpts']:
             ldeps = deps(l, 'eles/tdisf_fused', _gh)
             g_grad_flux.add(l, deps=ldeps)
@@ -213,8 +214,8 @@ class BaseAdvectionDiffusionSystem(BaseAdvectionSystem):
                      (ks[4], 'b'), (ks[7], 'f'), (ks[8], 'b')],
                 ]
 
-            # OpenMP kernel fusion is incompatible with the entropy grad hook
-            if not k['eles/grad_hook_upts']:
+            # OpenMP kernel fusion is incompatible with the entropy grad transform
+            if not k['eles/ent_to_con_grad_upts']:
                 self._group(g_grad_flux, ks, subs=subs)
 
         g_grad_flux.commit()
