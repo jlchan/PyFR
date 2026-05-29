@@ -114,7 +114,11 @@ class NavierStokesElements(BaseFluidElements, BaseAdvectionDiffusionElements):
             self._be.pointwise.register(f'{kprefix}.con_to_ent')
             self._be.pointwise.register(f'{kprefix}.ent_to_con_grad')
 
-            ent_tplargs = {'ndims': self.ndims, 'nvars': self.nvars}
+            ent_tplargs = {
+                'ndims': self.ndims,
+                'nvars': self.nvars,
+                'c': tplargs['c']
+            }
             ent_u = []
             for rgn in ('curved', 'linear'):
                 if rgn not in r:
@@ -138,6 +142,7 @@ class NavierStokesElements(BaseFluidElements, BaseAdvectionDiffusionElements):
             tplargs_e2c = {
                 'ndims': self.ndims,
                 'nvars': self.nvars,
+                'c': tplargs['c']
             }
             ent_to_con_grad_u = []
             for rgn in ('curved', 'linear'):
@@ -151,6 +156,7 @@ class NavierStokesElements(BaseFluidElements, BaseAdvectionDiffusionElements):
                         self._be.kernel(
                             'ent_to_con_grad', tplargs=tplargs_e2c,
                             dims=[self.nupts, n],
+                            uin=s(self.scal_upts[uin], rgn),
                             gradu=s(self._grad_upts, rgn),
                         )
                         for rgn, n in ent_to_con_grad_u
