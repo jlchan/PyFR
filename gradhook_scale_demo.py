@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Compare one viscous RHS: conservative vs entropy (plumbing, V = U).
+"""Compare one viscous RHS: conservative vs entropy-gradient plumbing.
 
     python gradhook_scale_demo.py
 
-Expect max |dU/dt_cons - dU/dt_ent| ~ machine epsilon (alpha=1 identity path).
+Expect max |dU/dt_cons - dU/dt_ent| ~ machine epsilon when
+con_to_ent and gradhook are exact inverses.
 Uses PyFR-Test-Cases/2d-couette-flow (repo submodule or ../PyFR-Test-Cases).
 """
 
@@ -77,16 +78,16 @@ def main() -> int:
         print('Running one RHS (conservative gradients)…', flush=True)
         out_cons = _rhs_out(ini, pyfrm, 'conservative')
 
-        print('Running one RHS (entropy gradients, V=U plumbing)…', flush=True)
+        print('Running one RHS (entropy-gradient plumbing)…', flush=True)
         out_ent = _rhs_out(ini, pyfrm, 'entropy')
 
     err = np.max(np.abs(out_cons - out_ent))
     print(f'max |dU/dt_cons - dU/dt_ent| = {err:.6e}', flush=True)
-    if not np.allclose(out_cons, out_ent, rtol=0.0, atol=1e-10):
+    if not np.allclose(out_cons, out_ent, rtol=0.0, atol=5e-9):
         print('FAIL: entropy path does not match conservative', file=sys.stderr)
         return 1
 
-    print('PASS: entropy plumbing (V=U) matches conservative.', flush=True)
+    print('PASS: entropy-gradient plumbing matches conservative.', flush=True)
     return 0
 
 

@@ -10,6 +10,11 @@ class TplargsMixin:
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
+        self._entropy_gradients = (
+            self.cfg.get('solver', 'gradient-variables', 'conservative') ==
+            'entropy'
+        )
+
         rsolver = self.cfg.get('solver-interfaces', 'riemann-solver')
         visc_corr = self.cfg.get('solver', 'viscosity-correction', 'none')
         shock_capturing = self.cfg.get('solver', 'shock-capturing', 'none')
@@ -31,14 +36,32 @@ class NavierStokesIntInters(TplargsMixin,
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-        self._be.pointwise.register('pyfr.solvers.navstokes.kernels.intconu')
         self._be.pointwise.register('pyfr.solvers.navstokes.kernels.intcflux')
 
-        self.kernels['con_u'] = lambda: self._be.kernel(
-            'intconu', tplargs=self._tplargs, dims=[self.ninterfpts],
-            ulin=self.scal_lhs, urin=self.scal_rhs,
-            ulout=self._comm_lhs, urout=self._comm_rhs
-        )
+        if self._entropy_gradients:
+            self._be.pointwise.register(
+                'pyfr.solvers.navstokes.kernels.intentconu'
+            )
+            self._ent_comm_lhs = self._scal_view(
+                self.lhs, 'get_ent_comm_fpts_for_inters'
+            )
+            self._ent_comm_rhs = self._scal_view(
+                self.rhs, 'get_ent_comm_fpts_for_inters'
+            )
+            self.kernels['con_u'] = lambda: self._be.kernel(
+                'intentconu', tplargs=self._tplargs, dims=[self.ninterfpts],
+                ulin=self.scal_lhs, urin=self.scal_rhs,
+                ulout=self._ent_comm_lhs, urout=self._ent_comm_rhs
+            )
+        else:
+            self._be.pointwise.register(
+                'pyfr.solvers.navstokes.kernels.intconu'
+            )
+            self.kernels['con_u'] = lambda: self._be.kernel(
+                'intconu', tplargs=self._tplargs, dims=[self.ninterfpts],
+                ulin=self.scal_lhs, urin=self.scal_rhs,
+                ulout=self._comm_lhs, urout=self._comm_rhs
+            )
         self.kernels['comm_flux'] = lambda: self._be.kernel(
             'intcflux', tplargs=self._tplargs, dims=[self.ninterfpts],
             ul=self.scal_lhs, ur=self.scal_rhs,
@@ -52,13 +75,31 @@ class NavierStokesMPIInters(TplargsMixin,
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-        self._be.pointwise.register('pyfr.solvers.navstokes.kernels.mpiconu')
         self._be.pointwise.register('pyfr.solvers.navstokes.kernels.mpicflux')
 
-        self.kernels['con_u'] = lambda: self._be.kernel(
-            'mpiconu', tplargs=self._tplargs, dims=[self.ninterfpts],
-            ulin=self.scal_lhs, urin=self.scal_rhs, ulout=self._comm_lhs
-        )
+        if self._entropy_gradients:
+            self._be.pointwise.register(
+                'pyfr.solvers.navstokes.kernels.mpientconu'
+            )
+            self._ent_comm_lhs = self._scal_xchg_view(
+                self.lhs, 'get_ent_comm_fpts_for_inters'
+            )
+            self._ent_comm_rhs = self._be.xchg_matrix_for_view(
+                self._ent_comm_lhs
+            )
+            self.kernels['con_u'] = lambda: self._be.kernel(
+                'mpientconu', tplargs=self._tplargs, dims=[self.ninterfpts],
+                ulin=self.scal_lhs, urin=self.scal_rhs,
+                ulout=self._ent_comm_lhs
+            )
+        else:
+            self._be.pointwise.register(
+                'pyfr.solvers.navstokes.kernels.mpiconu'
+            )
+            self.kernels['con_u'] = lambda: self._be.kernel(
+                'mpiconu', tplargs=self._tplargs, dims=[self.ninterfpts],
+                ulin=self.scal_lhs, urin=self.scal_rhs, ulout=self._comm_lhs
+            )
         self.kernels['comm_flux'] = lambda: self._be.kernel(
             'mpicflux', tplargs=self._tplargs, dims=[self.ninterfpts],
             ul=self.scal_lhs, ur=self.scal_rhs,
@@ -77,15 +118,31 @@ class NavierStokesBaseBCInters(TplargsMixin, BaseAdvectionDiffusionBCInters):
         self._tplargs['bctype'] = self.type
         self._tplargs['bccfluxstate'] = self.cflux_state
 
-        self._be.pointwise.register('pyfr.solvers.navstokes.kernels.bcconu')
         self._be.pointwise.register('pyfr.solvers.navstokes.kernels.bccflux')
 
-        self.kernels['con_u'] = lambda: self._be.kernel(
-            'bcconu', tplargs=self._tplargs, dims=[self.ninterfpts],
-            extrns=self._external_args, ulin=self.scal_lhs,
-            ulout=self._comm_lhs, nlin=self._pnorm_lhs,
-            **self._external_vals
-        )
+        if self._entropy_gradients:
+            self._be.pointwise.register(
+                'pyfr.solvers.navstokes.kernels.bcentconu'
+            )
+            self._ent_comm_lhs = self._scal_view(
+                self.lhs, 'get_ent_comm_fpts_for_inters'
+            )
+            self.kernels['con_u'] = lambda: self._be.kernel(
+                'bcentconu', tplargs=self._tplargs, dims=[self.ninterfpts],
+                extrns=self._external_args, ulin=self.scal_lhs,
+                ulout=self._ent_comm_lhs, nlin=self._pnorm_lhs,
+                **self._external_vals
+            )
+        else:
+            self._be.pointwise.register(
+                'pyfr.solvers.navstokes.kernels.bcconu'
+            )
+            self.kernels['con_u'] = lambda: self._be.kernel(
+                'bcconu', tplargs=self._tplargs, dims=[self.ninterfpts],
+                extrns=self._external_args, ulin=self.scal_lhs,
+                ulout=self._comm_lhs, nlin=self._pnorm_lhs,
+                **self._external_vals
+            )
         self.kernels['comm_flux'] = lambda: self._be.kernel(
             'bccflux', tplargs=self._tplargs, dims=[self.ninterfpts],
             extrns=self._external_args, ul=self.scal_lhs,

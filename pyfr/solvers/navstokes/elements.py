@@ -1,5 +1,6 @@
 import numpy as np
 
+from pyfr.solvers.base.elements import inters_map
 from pyfr.solvers.baseadvecdiff import BaseAdvectionDiffusionElements
 from pyfr.solvers.euler.elements import BaseFluidElements
 
@@ -42,6 +43,10 @@ class NavierStokesElements(BaseFluidElements, BaseAdvectionDiffusionElements):
         if self._entropy_gradients_enabled():
             return self._ent_comm_fpts
         return super().grad_field_fpts()
+
+    @inters_map
+    def get_ent_comm_fpts_for_inters(self, eidxs, fidx):
+        return self._ent_comm_fpts.mid, self.srtd_face_fpts[fidx][eidxs]
 
     def set_backend(self, backend, nonce, linoff):
         gradvars = self.cfg.get('solver', 'gradient-variables', 'conservative')
@@ -104,7 +109,6 @@ class NavierStokesElements(BaseFluidElements, BaseAdvectionDiffusionElements):
 
         # Helpers
         r, s = self.mesh_regions, self._slice_mat
-        kernel = self._be.kernel
 
         if self._entropy_gradients_enabled():
             self._be.pointwise.register(f'{kprefix}.con_to_ent')
@@ -130,20 +134,6 @@ class NavierStokesElements(BaseFluidElements, BaseAdvectionDiffusionElements):
                     )
 
                 self.kernels['con_to_ent_upts'] = con_to_ent_upts
-
-            self.kernels['seed_ent_comm_fpts'] = lambda: kernel(
-                'copy', self._ent_comm_fpts, self._comm_fpts
-            )
-
-            def con_to_ent_comm():
-                return kernel(
-                    'con_to_ent', tplargs=ent_tplargs,
-                    dims=[self.nfpts, self.neles],
-                    uin=self._ent_comm_fpts,
-                    vout=self._ent_comm_fpts,
-                )
-
-            self.kernels['con_to_ent_comm'] = con_to_ent_comm
 
             tplargs_gh = {
                 'ndims': self.ndims,

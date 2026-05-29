@@ -119,19 +119,9 @@ class BaseAdvectionDiffusionSystem(BaseAdvectionSystem):
         else:
             g_grad_flux.add_all(k['eles/tgradpcoru_upts'])
 
-        # Entropy face path: copy comm U then V(U) before M6
-        for l in k['eles/seed_ent_comm_fpts']:
-            g_grad_flux.add(l, deps=k['mpiint/con_u'])
-
-        for l in k['eles/con_to_ent_comm']:
-            g_grad_flux.add(l, deps=k['eles/seed_ent_comm_fpts'])
-
         # Compute the transformed gradient of the corrected solution
         for l in k['eles/tgradcoru_upts']:
-            if k['eles/con_to_ent_comm']:
-                d = deps(l, 'eles/tgradpcoru_upts') + k['eles/con_to_ent_comm']
-            else:
-                d = deps(l, 'eles/tgradpcoru_upts') + k['mpiint/con_u']
+            d = deps(l, 'eles/tgradpcoru_upts') + k['mpiint/con_u']
             g_grad_flux.add(l, deps=d)
 
         # Obtain the physical gradients at the solution points
