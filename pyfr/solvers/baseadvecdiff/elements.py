@@ -129,7 +129,7 @@ class BaseAdvectionDiffusionElements(BaseAdvectionElements):
         # Register exportable AV field with lazy getter (must be here
         # so plugins can discover it before commit)
         shock_capturing = self.cfg.get('solver', 'shock-capturing', 'none')
-        if shock_capturing == 'artificial-viscosity':
+        if shock_capturing in ('artificial-viscosity', 'ec-artificial-viscosity'):
             nverts = len(self.basis.linspts)
             self.export_fields.append(ExportableField(
                 name='artvisc', shape=(nverts,),

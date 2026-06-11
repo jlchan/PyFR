@@ -8,6 +8,18 @@ from pyfr.solvers.baseadvecdiff.artvisc import ArtificialViscosity
 class BaseAdvectionDiffusionSystem(BaseAdvectionSystem):
     _shock_capturing_modes = {'none', 'entropy-filter', 'artificial-viscosity'}
 
+    def _setup_artvisc_interfaces(self):
+        artvisc_fpts = {et: e.artvisc_fpts for et, e in self.ele_map.items()}
+        iint_v, mpi_v, bc_v = self.make_field_views(artvisc_fpts)
+
+        # C0 AV is continuous; both sides see the same value
+        for i, (lhs, rhs) in zip(self._int_inters, iint_v):
+            i.artvisc = lhs
+        for m, (lhs, rhs) in zip(self._mpi_inters, mpi_v):
+            m.artvisc = lhs
+        for b, lhs in zip(self._bc_inters, bc_v):
+            b.artvisc = lhs
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
@@ -25,18 +37,7 @@ class BaseAdvectionDiffusionSystem(BaseAdvectionSystem):
             # Commit to allocate AV matrices before creating views
             self.backend.commit()
 
-            # Create artvisc_fpts views on interfaces for comm_flux
-            artvisc_fpts = {et: e.artvisc_fpts
-                            for et, e in self.ele_map.items()}
-            iint_v, mpi_v, bc_v = self.make_field_views(artvisc_fpts)
-
-            # C0 AV is continuous; both sides see the same value
-            for i, (lhs, rhs) in zip(self._int_inters, iint_v):
-                i.artvisc = lhs
-            for m, (lhs, rhs) in zip(self._mpi_inters, mpi_v):
-                m.artvisc = lhs
-            for b, lhs in zip(self._bc_inters, bc_v):
-                b.artvisc = lhs
+            self._setup_artvisc_interfaces()
 
             # Register vertex exchange kernels and MPI requests
             self._av.prepare_mpi()
@@ -95,8 +96,6 @@ class BaseAdvectionDiffusionSystem(BaseAdvectionSystem):
         # Graph: compute gradients, flux, and partial divergence
         g_grad_flux = self.backend.graph()
         g_grad_flux.add_mpi_reqs(m['vect_fpts_recv'])
-        if self._ec_av:
-            g_grad_flux.add_mpi_reqs(m['av_scaling_fpts_recv'])
 
         # Unpack MPI face data (may be empty when unpack is a no-op)
         g_grad_flux.add_all(k['mpiint/scal_fpts_unpack'])
@@ -157,9 +156,6 @@ class BaseAdvectionDiffusionSystem(BaseAdvectionSystem):
         for send, pack in zip(m['vect_fpts_send'],
                               k['mpiint/vect_fpts_pack']):
             g_grad_flux.add_mpi_req(send, deps=[pack])
-
-        if self._ec_av:
-            self._ec_av.add_to_graph_grad_flux(g_grad_flux, k, m, deps)
 
         # Compute the common normal flux at our internal/boundary interfaces
         g_grad_flux.add_all(k['iint/comm_flux'],
@@ -229,9 +225,6 @@ class BaseAdvectionDiffusionSystem(BaseAdvectionSystem):
 
         # Graph: receive MPI gradients, compute MPI flux and divergence
         g_mpi_flux = self.backend.graph()
-
-        if self._ec_av:
-            self._ec_av.add_to_graph_mpi_flux(g_mpi_flux, k, deps)
 
         # Compute the common normal flux at our MPI interfaces
         # (vect_fpts_unpack may be absent for some interfaces due to

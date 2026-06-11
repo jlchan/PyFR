@@ -24,9 +24,13 @@ class _VtxPeer:
 class ArtificialViscosity:
     name = 'av'
 
-    def __init__(self, backend, cfg, mesh, ele_map):
+    def __init__(self, backend, cfg, mesh, ele_map, *, producer='sensor'):
         self._be = backend
         self._mesh = mesh
+        self._producer = producer
+
+        if producer not in {'sensor', 'ecav'}:
+            raise ValueError(f'invalid AV producer {producer!r}')
 
         # Allocate vertex buffer
         self._vtx_buf = backend.matrix((1, len(mesh.node_idxs)), extent='vtx')
@@ -36,15 +40,25 @@ class ArtificialViscosity:
 
         # Register kernel templates
         kprefix = 'pyfr.solvers.baseadvecdiff.kernels'
-        backend.pointwise.register(f'{kprefix}.shocksensor')
+        if producer == 'sensor':
+            backend.pointwise.register(f'{kprefix}.shocksensor')
+        else:
+            backend.pointwise.register(
+                'pyfr.solvers.navstokes.kernels.ecav_to_vtx'
+            )
         backend.pointwise.register(f'{kprefix}.avfill')
 
-        # AV config constants
-        c_av = cfg.items_as('solver-artificial-viscosity', float)
+        # AV config constants (sensor mode only)
+        c_av = (cfg.items_as('solver-artificial-viscosity', float)
+                if producer == 'sensor' else {})
 
         # Per-element-type setup
         for etype, eles in ele_map.items():
             self._setup_etype(etype, eles, mesh, c_av)
+
+    @property
+    def producer_key(self):
+        return 'shocksensor' if self._producer == 'sensor' else 'ecav_to_vtx'
 
     def _setup_etype(self, etype, eles, mesh, c_av):
         be = self._be
@@ -85,7 +99,7 @@ class ArtificialViscosity:
         rmap = np.zeros(n, dtype=int)
         cmap = np.searchsorted(mesh.node_idxs, vnodes.ravel())
 
-        # Full view for 1D kernels (shocksensor, avfill)
+        # Full view for 1D kernels (producer, avfill)
         eles.vtx_view = be.view(matmap, rmap, cmap)
 
         # Per-region views for 2D tflux kernel
@@ -101,22 +115,37 @@ class ArtificialViscosity:
                        artvisc_fpts):
         be = self._be
 
-        # Sensor template arguments
-        tplargs_sensor = self._sensor_tplargs(eles, c_av)
-        tplargs_sensor['nverts'] = nverts
-
         # Avfill template arguments
         tplargs_avfill = dict(
             nverts=nverts, nfpts=eles.nfpts,
             av_op=linbasis.nodal_basis_at(eles.basis.fpts).tolist()
         )
 
-        # Register kernel factories on elements
-        def shocksensor_kern(uin):
-            return be.kernel(
-                'shocksensor', tplargs=tplargs_sensor, dims=[eles.neles],
-                u=eles.scal_upts[uin], vtx=eles.vtx_view
-            )
+        if self._producer == 'sensor':
+            tplargs_sensor = self._sensor_tplargs(eles, c_av)
+            tplargs_sensor['nverts'] = nverts
+
+            def producer_kern(uin):
+                return be.kernel(
+                    'shocksensor', tplargs=tplargs_sensor, dims=[eles.neles],
+                    u=eles.scal_upts[uin], vtx=eles.vtx_view
+                )
+        else:
+            if not hasattr(eles, '_av_scaling_ele_view'):
+                mat = eles._av_scaling
+                eles._av_scaling_ele_view = be.view(
+                    np.full(eles.neles, mat.mid),
+                    np.zeros(eles.neles, dtype=int),
+                    np.arange(eles.neles),
+                )
+
+            def producer_kern():
+                return be.kernel(
+                    'ecav_to_vtx', tplargs={'nverts': nverts},
+                    dims=[eles.neles],
+                    av_scaling=eles._av_scaling_ele_view,
+                    vtx=eles.vtx_view,
+                )
 
         def avfill_kern():
             return be.kernel(
@@ -124,7 +153,7 @@ class ArtificialViscosity:
                 vtx=eles.vtx_view, artvisc_fpts=artvisc_fpts
             )
 
-        eles.kernels['shocksensor'] = shocksensor_kern
+        eles.kernels[self.producer_key] = producer_kern
         eles.kernels['avfill'] = avfill_kern
 
         # Set the getter for the exportable AV field (P1 vertex values)
@@ -238,11 +267,12 @@ class ArtificialViscosity:
         pass
 
     def add_to_graph_pre_recv(self, g, k, m):
-        # Vertex exchange: post receives, zero buffer, run sensor, pack, send
+        pk = f'eles/{self.producer_key}'
+        # Vertex exchange: post receives, zero buffer, run producer, pack, send
         g.add_mpi_reqs(m['vtx_recv'])
         g.add_all(k['vtx/vtx_zero'])
-        g.add_all(k['eles/shocksensor'], deps=k['vtx/vtx_zero'])
-        g.add_all(k['vtx/pack'], deps=k['eles/shocksensor'])
+        g.add_all(k[pk], deps=k['vtx/vtx_zero'])
+        g.add_all(k['vtx/pack'], deps=k[pk])
         for send, pack in zip(m['vtx_send'], k['vtx/pack']):
             g.add_mpi_req(send, deps=[pack])
 

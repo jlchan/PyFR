@@ -36,7 +36,7 @@
     fpdtype_t p, v[${ndims}];
     ${pyfr.expand('inviscid_flux', 'u', 'ftemp', 'p', 'v')};
     ${pyfr.expand('viscous_flux_add', 'u', gradu, 'ftemp')};
-% if shock_capturing == 'artificial-viscosity':
+% if shock_capturing in ('artificial-viscosity', 'ec-artificial-viscosity'):
     fpdtype_t artvisc;
     ${pyfr.expand('interp_artvisc', 'artvisc_vtx', 'upts', 'artvisc')};
     ${pyfr.expand('artificial_viscosity_add', gradu, 'ftemp', 'artvisc')};
