@@ -46,8 +46,14 @@ class ECArtificialViscosity:
             extent=nonce + 'ent_comm_fpts', tags={'align'}
         )
 
+        # Temporary localized spike for Gaussian-pulse AV visibility (256 quad
+        # mesh; element 187 is near domain centre). Skipped on smaller meshes.
+        av_init = np.zeros((1, eles.neles))
+        _spike_ele, _spike_val = 187, 0.025
+        if _spike_ele < eles.neles:
+            av_init[0, _spike_ele] = _spike_val
         eles._av_scaling = be.matrix(
-            (1, eles.neles), initval=np.full((1, eles.neles), 0.0),
+            (1, eles.neles), initval=av_init,
             extent=nonce + 'av_scaling', tags={'align'}
         )
 

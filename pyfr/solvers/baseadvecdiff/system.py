@@ -71,8 +71,8 @@ class BaseAdvectionDiffusionSystem(BaseAdvectionSystem):
         # Entropy filtering
         if self._ef:
             self._ef.add_to_graph_pre_recv(g_soln, k, m)
-        # Artificial viscosity
-        elif self._av:
+        # Artificial viscosity (legacy sensor: full early exchange in g_soln)
+        elif self._av and not self._ec_av:
             self._av.add_to_graph_pre_recv(g_soln, k, m)
 
         # Pack and send these interpolated solutions to our neighbours
@@ -96,6 +96,9 @@ class BaseAdvectionDiffusionSystem(BaseAdvectionSystem):
         # Graph: compute gradients, flux, and partial divergence
         g_grad_flux = self.backend.graph()
         g_grad_flux.add_mpi_reqs(m['vect_fpts_recv'])
+        # EC AV: post vertex receives early in this graph (send is late, after gradcoru_upts)
+        if self._av and self._ec_av:
+            self._av.add_to_graph_ecav_pre_recv(g_grad_flux, k, m)
 
         # Unpack MPI face data (may be empty when unpack is a no-op)
         g_grad_flux.add_all(k['mpiint/scal_fpts_unpack'])
@@ -104,8 +107,8 @@ class BaseAdvectionDiffusionSystem(BaseAdvectionSystem):
         for l in k['mpiint/con_u']:
             g_grad_flux.add(l, deps=deps(l, 'mpiint/scal_fpts_unpack'))
 
-        # AV: unpack vertex data, merge, and fill artvisc_fpts
-        if self._av:
+        # AV: unpack vertex data, merge, and fill artvisc_fpts (legacy sensor)
+        if self._av and not self._ec_av:
             self._av.add_to_graph_post_recv(g_grad_flux, k, deps)
         # EF: unpack and compute comm_entropy at MPI interfaces
         elif self._ef:
@@ -131,9 +134,19 @@ class BaseAdvectionDiffusionSystem(BaseAdvectionSystem):
         for l in k['eles/gradcoru_upts']:
             g_grad_flux.add(l, deps=deps(l, 'eles/tgradcoru_upts'))
 
+        # EC AV: produce and fill after entropy gradients are available
+        if self._av and self._ec_av:
+            self._av.add_to_graph_ecav_produce(
+                g_grad_flux, k, m, k['eles/gradcoru_upts']
+            )
+            self._av.add_to_graph_ecav_post_recv(g_grad_flux, k, deps)
+
         # Optional NS-only gradient transform (in-place between gradcoru_upts and faces)
         for l in k['eles/ent_to_con_grad_upts']:
-            g_grad_flux.add(l, deps=deps(l, 'eles/gradcoru_upts'))
+            d = deps(l, 'eles/gradcoru_upts')
+            if self._ec_av:
+                d = d + k['eles/avfill']
+            g_grad_flux.add(l, deps=d)
 
         # Compute the fused transformed flux and corrected gradient
         # (depends on avfill when AV is active — empty list otherwise)

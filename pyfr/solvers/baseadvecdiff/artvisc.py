@@ -267,10 +267,24 @@ class ArtificialViscosity:
         pass
 
     def add_to_graph_pre_recv(self, g, k, m):
+        if self._producer != 'sensor':
+            raise RuntimeError('use EC graph hooks for ecav producer')
+
         pk = f'eles/{self.producer_key}'
         # Vertex exchange: post receives, zero buffer, run producer, pack, send
         g.add_mpi_reqs(m['vtx_recv'])
         g.add_all(k['vtx/vtx_zero'])
+        g.add_all(k[pk], deps=k['vtx/vtx_zero'])
+        g.add_all(k['vtx/pack'], deps=k[pk])
+        for send, pack in zip(m['vtx_send'], k['vtx/pack']):
+            g.add_mpi_req(send, deps=[pack])
+
+    def add_to_graph_ecav_pre_recv(self, g, k, m):
+        g.add_mpi_reqs(m['vtx_recv'])
+
+    def add_to_graph_ecav_produce(self, g, k, m, deps):
+        pk = f'eles/{self.producer_key}'
+        g.add_all(k['vtx/vtx_zero'], deps=deps)
         g.add_all(k[pk], deps=k['vtx/vtx_zero'])
         g.add_all(k['vtx/pack'], deps=k[pk])
         for send, pack in zip(m['vtx_send'], k['vtx/pack']):
@@ -287,3 +301,6 @@ class ArtificialViscosity:
 
         # Fill artvisc_fpts once all merges are complete
         g.add_all(k['eles/avfill'], deps=k['vtx/merge'])
+
+    def add_to_graph_ecav_post_recv(self, g, k, deps):
+        self.add_to_graph_post_recv(g, k, deps)
