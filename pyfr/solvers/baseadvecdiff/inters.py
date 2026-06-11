@@ -17,6 +17,10 @@ class BaseAdvectionDiffusionIntInters(BaseAdvectionIntInters):
         # Artificial viscosity (populated by ArtificialViscosity if active)
         self.artvisc = None
 
+        # EC artificial viscosity face scaling (populated by ECArtificialViscosity)
+        self.av_scaling_l = None
+        self.av_scaling_r = None
+
         # Additional kernel constants
         self.c |= cfg.items_as('solver-interfaces', float)
 
@@ -60,6 +64,10 @@ class BaseAdvectionDiffusionMPIInters(BaseAdvectionMPIInters):
         # Artificial viscosity (populated by ArtificialViscosity if active)
         self.artvisc = None
 
+        # EC artificial viscosity face scaling (populated by ECArtificialViscosity)
+        self.av_scaling_l = None
+        self.av_scaling_r = None
+
 
 class BaseAdvectionDiffusionBCInters(BaseAdvectionBCInters):
     def __init__(self, be, lhs, elemap, cfgsect, cfg, bccomm):
@@ -74,3 +82,6 @@ class BaseAdvectionDiffusionBCInters(BaseAdvectionBCInters):
 
         # Artificial viscosity (populated by ArtificialViscosity if active)
         self.artvisc = None
+
+        # EC artificial viscosity face scaling (populated by ECArtificialViscosity)
+        self.av_scaling_l = None

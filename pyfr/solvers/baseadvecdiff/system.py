@@ -11,6 +11,8 @@ class BaseAdvectionDiffusionSystem(BaseAdvectionSystem):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
+        self._ec_av = None
+
         shock_capturing = self.cfg.get('solver', 'shock-capturing', 'none')
 
         # Handle artificial viscosity
@@ -93,6 +95,8 @@ class BaseAdvectionDiffusionSystem(BaseAdvectionSystem):
         # Graph: compute gradients, flux, and partial divergence
         g_grad_flux = self.backend.graph()
         g_grad_flux.add_mpi_reqs(m['vect_fpts_recv'])
+        if self._ec_av:
+            g_grad_flux.add_mpi_reqs(m['av_scaling_fpts_recv'])
 
         # Unpack MPI face data (may be empty when unpack is a no-op)
         g_grad_flux.add_all(k['mpiint/scal_fpts_unpack'])
@@ -153,6 +157,9 @@ class BaseAdvectionDiffusionSystem(BaseAdvectionSystem):
         for send, pack in zip(m['vect_fpts_send'],
                               k['mpiint/vect_fpts_pack']):
             g_grad_flux.add_mpi_req(send, deps=[pack])
+
+        if self._ec_av:
+            self._ec_av.add_to_graph_grad_flux(g_grad_flux, k, m, deps)
 
         # Compute the common normal flux at our internal/boundary interfaces
         g_grad_flux.add_all(k['iint/comm_flux'],
@@ -222,6 +229,9 @@ class BaseAdvectionDiffusionSystem(BaseAdvectionSystem):
 
         # Graph: receive MPI gradients, compute MPI flux and divergence
         g_mpi_flux = self.backend.graph()
+
+        if self._ec_av:
+            self._ec_av.add_to_graph_mpi_flux(g_mpi_flux, k, deps)
 
         # Compute the common normal flux at our MPI interfaces
         # (vect_fpts_unpack may be absent for some interfaces due to

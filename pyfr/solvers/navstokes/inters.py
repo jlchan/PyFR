@@ -4,16 +4,14 @@ from pyfr.solvers.baseadvecdiff import (BaseAdvectionDiffusionBCInters,
                                         BaseAdvectionDiffusionIntInters,
                                         BaseAdvectionDiffusionMPIInters)
 from pyfr.solvers.euler.inters import MassFlowBCMixin, PressureBCMixin
+from pyfr.solvers.navstokes.ecartvisc import ECArtificialViscosity
 
 
 class TplargsMixin:
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-        self._entropy_gradients = (
-            self.cfg.get('solver', 'gradient-variables', 'conservative') ==
-            'entropy'
-        )
+        self._entropy_gradients = ECArtificialViscosity.enabled(self.cfg)
 
         rsolver = self.cfg.get('solver-interfaces', 'riemann-solver')
         visc_corr = self.cfg.get('solver', 'viscosity-correction', 'none')

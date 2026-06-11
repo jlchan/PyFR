@@ -3,13 +3,12 @@ import numpy as np
 from pyfr.solvers.base.elements import inters_map
 from pyfr.solvers.baseadvecdiff import BaseAdvectionDiffusionElements
 from pyfr.solvers.euler.elements import BaseFluidElements
+from pyfr.solvers.navstokes.ecartvisc import ECArtificialViscosity
 
 
 class NavierStokesElements(BaseFluidElements, BaseAdvectionDiffusionElements):
     # Use the density field for shock sensing
     shockvar = 'rho'
-
-    _GRADIENT_VARIABLES = {'conservative', 'entropy'}
 
     @staticmethod
     def grad_con_to_pri(cons, grad_cons, cfg):
@@ -32,7 +31,7 @@ class NavierStokesElements(BaseFluidElements, BaseAdvectionDiffusionElements):
         return [grad_rho, *grad_uvw, grad_p]
 
     def _entropy_gradients_enabled(self):
-        return self._gradient_variables == 'entropy'
+        return ECArtificialViscosity.enabled(self.cfg)
 
     def grad_field_upts(self, uin):
         if self._entropy_gradients_enabled():
@@ -49,14 +48,7 @@ class NavierStokesElements(BaseFluidElements, BaseAdvectionDiffusionElements):
         return self._ent_comm_fpts.mid, self.srtd_face_fpts[fidx][eidxs]
 
     def set_backend(self, backend, nonce, linoff):
-        gradvars = self.cfg.get('solver', 'gradient-variables', 'conservative')
-        if gradvars not in self._GRADIENT_VARIABLES:
-            raise ValueError(
-                'Invalid gradient-variables option '
-                f'{gradvars!r}; expected one of '
-                f'{sorted(self._GRADIENT_VARIABLES)}'
-            )
-        self._gradient_variables = gradvars
+        ECArtificialViscosity.validate_config(self.cfg)
 
         super().set_backend(backend, nonce, linoff)
 
@@ -65,26 +57,8 @@ class NavierStokesElements(BaseFluidElements, BaseAdvectionDiffusionElements):
             return
 
         if self._entropy_gradients_enabled():
-            if self.grad_fusion:
-                raise ValueError(
-                    'gradient-variables = entropy is incompatible with '
-                    'gradient fusion (disable flux anti-aliasing and use a '
-                    'non-block backend)'
-                )
-            if 'flux' in self.antialias:
-                raise ValueError(
-                    'gradient-variables = entropy is incompatible with flux '
-                    'anti-aliasing'
-                )
+            ECArtificialViscosity.setup_elements(self, nonce)
 
-            self._ent_upts = backend.matrix(
-                (self.nupts, self.nvars, self.neles),
-                extent=nonce + 'ent_upts', tags={'align'}
-            )
-            self._ent_comm_fpts = backend.matrix(
-                (self.nfpts, self.nvars, self.neles),
-                extent=nonce + 'ent_comm_fpts', tags={'align'}
-            )
         # Register our flux kernels
         kprefix = 'pyfr.solvers.navstokes.kernels'
         self._be.pointwise.register(f'{kprefix}.tflux')
@@ -109,60 +83,6 @@ class NavierStokesElements(BaseFluidElements, BaseAdvectionDiffusionElements):
 
         # Helpers
         r, s = self.mesh_regions, self._slice_mat
-
-        if self._entropy_gradients_enabled():
-            self._be.pointwise.register(f'{kprefix}.con_to_ent')
-            self._be.pointwise.register(f'{kprefix}.ent_to_con_grad')
-
-            ent_tplargs = {
-                'ndims': self.ndims,
-                'nvars': self.nvars,
-                'c': tplargs['c']
-            }
-            ent_u = []
-            for rgn in ('curved', 'linear'):
-                if rgn not in r:
-                    continue
-                ent_u.append((rgn, r[rgn]))
-
-            if ent_u:
-                def con_to_ent_upts(uin):
-                    return self._make_sliced_kernel(
-                        self._be.kernel(
-                            'con_to_ent', tplargs=ent_tplargs,
-                            dims=[self.nupts, n],
-                            uin=s(self.scal_upts[uin], rgn),
-                            vout=s(self._ent_upts, rgn),
-                        )
-                        for rgn, n in ent_u
-                    )
-
-                self.kernels['con_to_ent_upts'] = con_to_ent_upts
-
-            tplargs_e2c = {
-                'ndims': self.ndims,
-                'nvars': self.nvars,
-                'c': tplargs['c']
-            }
-            ent_to_con_grad_u = []
-            for rgn in ('curved', 'linear'):
-                if rgn not in r:
-                    continue
-                ent_to_con_grad_u.append((rgn, r[rgn]))
-
-            if ent_to_con_grad_u:
-                def ent_to_con_grad_upts(uin):
-                    return self._make_sliced_kernel(
-                        self._be.kernel(
-                            'ent_to_con_grad', tplargs=tplargs_e2c,
-                            dims=[self.nupts, n],
-                            uin=s(self.scal_upts[uin], rgn),
-                            gradu=s(self._grad_upts, rgn),
-                        )
-                        for rgn, n in ent_to_con_grad_u
-                    )
-
-                self.kernels['ent_to_con_grad_upts'] = ent_to_con_grad_upts
 
         # Mode-dependent setup
         if self.grad_fusion:
