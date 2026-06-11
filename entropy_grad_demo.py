@@ -135,9 +135,12 @@ def _couette_dir(root: Path) -> Path | None:
 
 
 def _rhs_and_grads(cfg_path: Path, pyfrm: Path,
-                   gradvars: str) -> tuple[np.ndarray, np.ndarray]:
+                   ec_av: bool) -> tuple[np.ndarray, np.ndarray]:
     cfg = Inifile.load(str(cfg_path))
-    cfg.set('solver', 'gradient-variables', gradvars)
+    if ec_av:
+        cfg.set('solver', 'shock-capturing', 'ec-artificial-viscosity')
+    else:
+        cfg.set('solver', 'shock-capturing', 'none')
     if Path(GCC15_CC).is_file():
         cfg.set('backend-openmp', 'cc', GCC15_CC)
 
@@ -193,21 +196,21 @@ def main() -> int:
         )
 
         print('Running one RHS (conservative gradients)…', flush=True)
-        out_cons, grad_cons = _rhs_and_grads(ini, pyfrm, 'conservative')
+        out_cons, grad_cons = _rhs_and_grads(ini, pyfrm, False)
 
-        print('Running one RHS (entropy-gradient plumbing)…', flush=True)
-        out_ent, grad_ent = _rhs_and_grads(ini, pyfrm, 'entropy')
+        print('Running one RHS (EC-artificial-viscosity)…', flush=True)
+        out_ent, grad_ent = _rhs_and_grads(ini, pyfrm, True)
 
-    if not _print_rel_diff('Conservative-gradient vs entropy-gradient field',
+    if not _print_rel_diff('Conservative vs EC-AV gradient field',
                            grad_cons, grad_ent):
         print('FAIL: non-finite gradient difference', file=sys.stderr)
         return 1
-    if not _print_rel_diff('Conservative-gradient vs entropy-gradient RHS',
+    if not _print_rel_diff('Conservative vs EC-AV RHS',
                            out_cons, out_ent):
         print('FAIL: non-finite RHS difference', file=sys.stderr)
         return 1
 
-    print('PASS: entropy-gradient kernels match local references.', flush=True)
+    print('PASS: EC-AV entropy-gradient path runs.', flush=True)
     return 0
 
 
