@@ -134,10 +134,15 @@ class BaseAdvectionDiffusionSystem(BaseAdvectionSystem):
         for l in k['eles/gradcoru_upts']:
             g_grad_flux.add(l, deps=deps(l, 'eles/tgradcoru_upts'))
 
+        for l in k['eles/ecav_visc_ent_diss']:
+            g_grad_flux.add(l, deps=deps(l, 'eles/gradcoru_upts'))
+
         # EC AV: produce and fill after entropy gradients are available
         if self._av and self._ec_av:
+            ecav_deps = (k['eles/gradcoru_upts']
+                         + k['eles/ecav_visc_ent_diss'])
             self._av.add_to_graph_ecav_produce(
-                g_grad_flux, k, m, k['eles/gradcoru_upts']
+                g_grad_flux, k, m, ecav_deps
             )
             self._av.add_to_graph_ecav_post_recv(g_grad_flux, k, deps)
 

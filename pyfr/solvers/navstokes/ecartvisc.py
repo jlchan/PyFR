@@ -1,5 +1,7 @@
 import numpy as np
 
+from pyfr.quadrules import get_quadrule
+
 
 class ECArtificialViscosity:
     """Entropy-gradient and EC artificial-viscosity for Navier–Stokes."""
@@ -57,7 +59,63 @@ class ECArtificialViscosity:
             extent=nonce + 'av_scaling', tags={'align'}
         )
 
+        eles._ecav_diss = be.matrix(
+            (1, eles.neles), extent=nonce + 'ecav_diss', tags={'align'}
+        )
+
         cls._setup_entropy_kernels(eles)
+        cls._setup_ecav_diss(eles)
+
+    @classmethod
+    def _setup_ecav_diss(cls, eles):
+        be = eles._be
+        kprefix = 'pyfr.solvers.navstokes.kernels'
+        c = eles.cfg.items_as('constants', float)
+        fpdtype = be.fpdtype
+
+        rname = eles.cfg.get(f'solver-elements-{eles.name}', 'soln-pts')
+        if rname != 'gauss-legendre-lobatto':
+            raise ValueError(
+                'ecav viscous dissipation requires soln-pts = '
+                'gauss-legendre-lobatto'
+            )
+
+        r = get_quadrule(eles.name, rname, eles.nupts)
+        wts_np = (r.wts[:, None] / eles.rcpdjac_at_np('upts')).astype(fpdtype)
+        eles._ecav_wts_upts = be.const_matrix(wts_np, tags={'align'})
+
+        be.pointwise.register(f'{kprefix}.ecav_visc_ent_diss')
+
+        tplargs = {
+            'ndims': eles.ndims,
+            'nvars': eles.nvars,
+            'nupts': eles.nupts,
+            'c': c,
+        }
+
+        r, s = eles.mesh_regions, eles._slice_mat
+        diss_rgn = []
+
+        for rgn in ('curved', 'linear'):
+            if rgn not in r:
+                continue
+            diss_rgn.append((rgn, r[rgn]))
+
+        if diss_rgn:
+            def ecav_visc_ent_diss_upts(uin):
+                return eles._make_sliced_kernel(
+                    be.kernel(
+                        'ecav_visc_ent_diss', tplargs=tplargs,
+                        dims=[eles.nupts, n],
+                        uin=s(eles.scal_upts[uin], rgn),
+                        gradv=s(eles._grad_upts, rgn),
+                        wts=s(eles._ecav_wts_upts, rgn),
+                        diss=eles._ecav_diss,
+                    )
+                    for rgn, n in diss_rgn
+                )
+
+            eles.kernels['ecav_visc_ent_diss'] = ecav_visc_ent_diss_upts
 
     @classmethod
     def _setup_entropy_kernels(cls, eles):
