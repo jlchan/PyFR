@@ -145,13 +145,10 @@ class ECArtificialViscosity:
         }
 
         if eles.basis.order > 0:
-            def ecav_tgradlocal_upts(uin):
-                return kernel(
-                    'mul', eles.opmat('M4'), eles._ent_upts,
-                    out=eles._ecav_grad_upts,
-                )
-
-            eles.kernels['ecav_tgradlocal_upts'] = ecav_tgradlocal_upts
+            eles.kernels['ecav_tgradlocal_upts'] = lambda: kernel(
+                'mul', eles.opmat('M4'), eles._ent_upts,
+                out=eles._ecav_grad_upts,
+            )
 
         gradlocal_u = []
         if 'curved' in regions:
