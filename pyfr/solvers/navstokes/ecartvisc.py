@@ -63,8 +63,19 @@ class ECArtificialViscosity:
             (1, eles.neles), extent=nonce + 'ecav_diss', tags={'align'}
         )
 
+        eles._ecav_surf = be.matrix(
+            (1, eles.neles), extent=nonce + 'ecav_surf', tags={'align'}
+        )
+        eles._ecav_vol = be.matrix(
+            (1, eles.neles), extent=nonce + 'ecav_vol', tags={'align'}
+        )
+        eles._ecav_resid = be.matrix(
+            (1, eles.neles), extent=nonce + 'ecav_resid', tags={'align'}
+        )
+
         cls._setup_entropy_kernels(eles)
         cls._setup_ecav_diss(eles)
+        cls._setup_ecav_resid(eles)
 
     @classmethod
     def _setup_ecav_diss(cls, eles):
@@ -116,6 +127,129 @@ class ECArtificialViscosity:
                 )
 
             eles.kernels['ecav_visc_ent_diss'] = ecav_visc_ent_diss_upts
+
+    @classmethod
+    def _setup_ecav_resid(cls, eles):
+        be = eles._be
+        kprefix = 'pyfr.solvers.navstokes.kernels'
+        c = eles.cfg.items_as('constants', float)
+        fpdtype = be.fpdtype
+
+        pnorm = eles._pnorm_fpts.transpose(0, 2, 1)
+        qwts_pnorm = (
+            eles.basis.fpts_wts[:, None, None] * pnorm
+        ).astype(fpdtype)
+        eles._ecav_qnorm_fpts = be.const_matrix(qwts_pnorm, tags={'align'})
+
+        be.pointwise.register(f'{kprefix}.ecav_surface_integral')
+        be.pointwise.register(f'{kprefix}.ecav_volume_integral')
+        be.pointwise.register(f'{kprefix}.ecav_entropy_resid')
+        be.pointwise.register(f'{kprefix}.ecav_av_scaling')
+
+        tplargs = {
+            'ndims': eles.ndims,
+            'nvars': eles.nvars,
+            'nupts': eles.nupts,
+            'c': c,
+        }
+
+        r, s = eles.mesh_regions, eles._slice_mat
+        resid_rgn = []
+
+        for rgn in ('curved', 'linear'):
+            if rgn not in r:
+                continue
+            resid_rgn.append((rgn, r[rgn]))
+
+        if resid_rgn:
+            def ecav_surface_integral(uin):
+                return eles._make_sliced_kernel(
+                    be.kernel(
+                        'ecav_surface_integral', tplargs=tplargs,
+                        dims=[eles.nfpts, n],
+                        uin=s(eles._scal_fpts, rgn),
+                        qnorm=s(eles._ecav_qnorm_fpts, rgn),
+                        surf=eles._ecav_surf,
+                    )
+                    for rgn, n in resid_rgn
+                )
+
+            def ecav_volume_integral(uin):
+                return eles._make_sliced_kernel(
+                    be.kernel(
+                        'ecav_volume_integral', tplargs=tplargs,
+                        dims=[eles.nupts, n],
+                        uin=s(eles.scal_upts[uin], rgn),
+                        gradv=s(eles._grad_upts, rgn),
+                        wts=s(eles._ecav_wts_upts, rgn),
+                        vol=eles._ecav_vol,
+                    )
+                    for rgn, n in resid_rgn
+                )
+
+            def _ensure_ecav_ele_views():
+                if hasattr(eles, '_ecav_resid_ele_view'):
+                    return
+                mat_surf = eles._ecav_surf
+                mat_vol = eles._ecav_vol
+                mat_resid = eles._ecav_resid
+                eles._ecav_surf_ele_view = be.view(
+                    np.full(eles.neles, mat_surf.mid),
+                    np.zeros(eles.neles, dtype=int),
+                    np.arange(eles.neles),
+                )
+                eles._ecav_vol_ele_view = be.view(
+                    np.full(eles.neles, mat_vol.mid),
+                    np.zeros(eles.neles, dtype=int),
+                    np.arange(eles.neles),
+                )
+                eles._ecav_resid_ele_view = be.view(
+                    np.full(eles.neles, mat_resid.mid),
+                    np.zeros(eles.neles, dtype=int),
+                    np.arange(eles.neles),
+                )
+
+            def ecav_entropy_resid():
+                _ensure_ecav_ele_views()
+                return be.kernel(
+                    'ecav_entropy_resid', tplargs={},
+                    dims=[eles.neles],
+                    surf=eles._ecav_surf_ele_view,
+                    vol=eles._ecav_vol_ele_view,
+                    resid=eles._ecav_resid_ele_view,
+                )
+
+            tplargs_av = {'eps': float(np.finfo(fpdtype).eps)}
+
+            def ecav_av_scaling():
+                _ensure_ecav_ele_views()
+                if not hasattr(eles, '_ecav_diss_ele_view'):
+                    mat_diss = eles._ecav_diss
+                    eles._ecav_diss_ele_view = be.view(
+                        np.full(eles.neles, mat_diss.mid),
+                        np.zeros(eles.neles, dtype=int),
+                        np.arange(eles.neles),
+                    )
+                if not hasattr(eles, '_av_scaling_ele_view'):
+                    mat_av = eles._av_scaling
+                    eles._av_scaling_ele_view = be.view(
+                        np.full(eles.neles, mat_av.mid),
+                        np.zeros(eles.neles, dtype=int),
+                        np.arange(eles.neles),
+                    )
+
+                return be.kernel(
+                    'ecav_av_scaling', tplargs=tplargs_av,
+                    dims=[eles.neles],
+                    resid=eles._ecav_resid_ele_view,
+                    diss=eles._ecav_diss_ele_view,
+                    av_scaling=eles._av_scaling_ele_view,
+                )
+
+            eles.kernels['ecav_surface_integral'] = ecav_surface_integral
+            eles.kernels['ecav_volume_integral'] = ecav_volume_integral
+            eles.kernels['ecav_entropy_resid'] = ecav_entropy_resid
+            eles.kernels['ecav_av_scaling'] = ecav_av_scaling
 
     @classmethod
     def _setup_entropy_kernels(cls, eles):

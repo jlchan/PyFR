@@ -68,6 +68,9 @@ class BaseAdvectionDiffusionSystem(BaseAdvectionSystem):
         # Interpolate the solution to the flux points
         g_soln.add_all(k['eles/disu'], deps=k['eles/entropy_filter'])
 
+        for l in k['eles/ecav_surface_integral']:
+            g_soln.add(l, deps=deps(l, 'eles/disu'))
+
         # Entropy filtering
         if self._ef:
             self._ef.add_to_graph_pre_recv(g_soln, k, m)
@@ -137,10 +140,20 @@ class BaseAdvectionDiffusionSystem(BaseAdvectionSystem):
         for l in k['eles/ecav_visc_ent_diss']:
             g_grad_flux.add(l, deps=deps(l, 'eles/gradcoru_upts'))
 
+        for l in k['eles/ecav_volume_integral']:
+            d = deps(l, 'eles/gradcoru_upts')
+            if k['eles/ecav_visc_ent_diss']:
+                d = d + k['eles/ecav_visc_ent_diss']
+            g_grad_flux.add(l, deps=d)
+
+        for l in k['eles/ecav_entropy_resid']:
+            g_grad_flux.add(l, deps=k['eles/ecav_volume_integral'])
+
         # EC AV: produce and fill after entropy gradients are available
         if self._av and self._ec_av:
             ecav_deps = (k['eles/gradcoru_upts']
-                         + k['eles/ecav_visc_ent_diss'])
+                         + k['eles/ecav_visc_ent_diss']
+                         + k['eles/ecav_entropy_resid'])
             self._av.add_to_graph_ecav_produce(
                 g_grad_flux, k, m, ecav_deps
             )
@@ -150,7 +163,7 @@ class BaseAdvectionDiffusionSystem(BaseAdvectionSystem):
         for l in k['eles/ent_to_con_grad_upts']:
             d = deps(l, 'eles/gradcoru_upts')
             if self._ec_av:
-                d = d + k['eles/avfill']
+                d = d + k['eles/avfill'] + k['eles/ecav_entropy_resid']
             g_grad_flux.add(l, deps=d)
 
         # Compute the fused transformed flux and corrected gradient
