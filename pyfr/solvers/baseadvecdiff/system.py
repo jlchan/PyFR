@@ -121,6 +121,12 @@ class BaseAdvectionDiffusionSystem(BaseAdvectionSystem):
         for l in k['eles/con_to_ent_upts']:
             g_grad_flux.add(l)
 
+        # ECAV volume residual: element-local M4 entropy gradient (no M6)
+        for l in k['eles/ecav_tgradlocal_upts']:
+            g_grad_flux.add(l, deps=deps(l, 'eles/con_to_ent_upts'))
+        for l in k['eles/ecav_gradlocal_upts']:
+            g_grad_flux.add(l, deps=deps(l, 'eles/ecav_tgradlocal_upts'))
+
         # Compute the transformed gradient of the partially corrected solution
         if k['eles/con_to_ent_upts']:
             for l in k['eles/tgradpcoru_upts']:
@@ -141,19 +147,20 @@ class BaseAdvectionDiffusionSystem(BaseAdvectionSystem):
             g_grad_flux.add(l, deps=deps(l, 'eles/gradcoru_upts'))
 
         for l in k['eles/ecav_volume_integral']:
-            d = deps(l, 'eles/gradcoru_upts')
-            if k['eles/ecav_visc_ent_diss']:
-                d = d + k['eles/ecav_visc_ent_diss']
-            g_grad_flux.add(l, deps=d)
+            g_grad_flux.add(l, deps=deps(l, 'eles/ecav_gradlocal_upts'))
 
         for l in k['eles/ecav_entropy_resid']:
             g_grad_flux.add(l, deps=k['eles/ecav_volume_integral'])
+
+        for l in k['eles/ecav_av_scaling']:
+            g_grad_flux.add(l, deps=k['eles/ecav_entropy_resid'])
 
         # EC AV: produce and fill after entropy gradients are available
         if self._av and self._ec_av:
             ecav_deps = (k['eles/gradcoru_upts']
                          + k['eles/ecav_visc_ent_diss']
-                         + k['eles/ecav_entropy_resid'])
+                         + k['eles/ecav_entropy_resid']
+                         + k['eles/ecav_av_scaling'])
             self._av.add_to_graph_ecav_produce(
                 g_grad_flux, k, m, ecav_deps
             )

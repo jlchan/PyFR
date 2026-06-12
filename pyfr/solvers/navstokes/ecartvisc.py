@@ -48,14 +48,8 @@ class ECArtificialViscosity:
             extent=nonce + 'ent_comm_fpts', tags={'align'}
         )
 
-        # Temporary localized spike for Gaussian-pulse AV visibility (256 quad
-        # mesh; element 187 is near domain centre). Skipped on smaller meshes.
-        av_init = np.zeros((1, eles.neles))
-        _spike_ele, _spike_val = 187, 0.025
-        if _spike_ele < eles.neles:
-            av_init[0, _spike_ele] = _spike_val
         eles._av_scaling = be.matrix(
-            (1, eles.neles), initval=av_init,
+            (1, eles.neles), initval=np.zeros((1, eles.neles)),
             extent=nonce + 'av_scaling', tags={'align'}
         )
 
@@ -72,8 +66,13 @@ class ECArtificialViscosity:
         eles._ecav_resid = be.matrix(
             (1, eles.neles), extent=nonce + 'ecav_resid', tags={'align'}
         )
+        eles._ecav_grad_upts = be.matrix(
+            (eles.ndims, eles.nupts, eles.nvars, eles.neles),
+            extent=nonce + 'ecav_grad_upts', tags={'align'}
+        )
 
         cls._setup_entropy_kernels(eles)
+        cls._setup_ecav_local_grad(eles)
         cls._setup_ecav_diss(eles)
         cls._setup_ecav_resid(eles)
 
@@ -129,6 +128,54 @@ class ECArtificialViscosity:
             eles.kernels['ecav_visc_ent_diss'] = ecav_visc_ent_diss_upts
 
     @classmethod
+    def _setup_ecav_local_grad(cls, eles):
+        """Element-local entropy grad: M4·V at upts, then metric transform."""
+        be = eles._be
+        kprefix = 'pyfr.solvers.baseadvecdiff.kernels'
+        kernel, slicedk = be.kernel, eles._make_sliced_kernel
+        slicem, regions = eles._slice_mat, eles.mesh_regions
+
+        be.pointwise.register(f'{kprefix}.gradcoru')
+
+        tplargs = {
+            'ndims': eles.ndims,
+            'nvars': eles.nvars,
+            'nverts': len(eles.basis.linspts),
+            'jac_exprs': eles.basis.jac_exprs,
+        }
+
+        if eles.basis.order > 0:
+            def ecav_tgradlocal_upts(uin):
+                return kernel(
+                    'mul', eles.opmat('M4'), eles._ent_upts,
+                    out=eles._ecav_grad_upts,
+                )
+
+            eles.kernels['ecav_tgradlocal_upts'] = ecav_tgradlocal_upts
+
+        gradlocal_u = []
+        if 'curved' in regions:
+            gradlocal_u.append(lambda: kernel(
+                'gradcoru', tplargs=tplargs | {'ktype': 'curved'},
+                dims=[eles.nupts, regions['curved']],
+                gradu=slicem(eles._ecav_grad_upts, 'curved'),
+                smats=eles.curved_smat_at('upts'),
+                rcpdjac=eles.rcpdjac_at('upts', 'curved'),
+            ))
+        if 'linear' in regions:
+            gradlocal_u.append(lambda: kernel(
+                'gradcoru', tplargs=tplargs | {'ktype': 'linear'},
+                dims=[eles.nupts, regions['linear']],
+                gradu=slicem(eles._ecav_grad_upts, 'linear'),
+                upts=eles.upts, verts=eles.ploc_at('linspts', 'linear'),
+            ))
+
+        if gradlocal_u:
+            eles.kernels['ecav_gradlocal_upts'] = (
+                lambda: slicedk(k() for k in gradlocal_u)
+            )
+
+    @classmethod
     def _setup_ecav_resid(cls, eles):
         be = eles._be
         kprefix = 'pyfr.solvers.navstokes.kernels'
@@ -180,7 +227,7 @@ class ECArtificialViscosity:
                         'ecav_volume_integral', tplargs=tplargs,
                         dims=[eles.nupts, n],
                         uin=s(eles.scal_upts[uin], rgn),
-                        gradv=s(eles._grad_upts, rgn),
+                        gradv=s(eles._ecav_grad_upts, rgn),
                         wts=s(eles._ecav_wts_upts, rgn),
                         vol=eles._ecav_vol,
                     )
