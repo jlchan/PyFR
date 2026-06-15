@@ -215,11 +215,15 @@ class BaseElements:
         else:
             return klist[0]
 
+    def _grad_fusion_enabled(self, backend):
+        # Preserve the existing default: fuse only on non-block backends when
+        # flux anti-aliasing is disabled.
+        return not (backend.blocks or 'flux' in self.antialias)
+
     def set_backend(self, backend, nonce, linoff):
         self._be = backend
 
-        # If we are doing gradient fusion
-        self.grad_fusion = not (self._be.blocks or 'flux' in self.antialias)
+        self.grad_fusion = self._grad_fusion_enabled(backend)
 
         if self.basis.order >= 2:
             self.linoff = linoff - linoff % -backend.csubsz

@@ -24,12 +24,6 @@ class ECArtificialViscosity:
 
     @classmethod
     def setup_elements(cls, eles, nonce):
-        if eles.grad_fusion:
-            raise ValueError(
-                'shock-capturing = ec-artificial-viscosity is incompatible '
-                'with gradient fusion (disable flux anti-aliasing and use a '
-                'non-block backend)'
-            )
         if 'flux' in eles.antialias:
             raise ValueError(
                 'shock-capturing = ec-artificial-viscosity is incompatible '

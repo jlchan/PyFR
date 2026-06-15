@@ -47,6 +47,15 @@ class NavierStokesElements(BaseFluidElements, BaseAdvectionDiffusionElements):
     def get_ent_comm_fpts_for_inters(self, eidxs, fidx):
         return self._ent_comm_fpts.mid, self.srtd_face_fpts[fidx][eidxs]
 
+    def _grad_fusion_enabled(self, backend):
+        # ECAV requires the unfused gradient path on every backend.  Block
+        # backends already disable fusion through the base policy; this override
+        # handles non-block backends such as CUDA/HIP/Metal, where fusion would
+        # otherwise be enabled.
+        if ECArtificialViscosity.enabled(self.cfg):
+            return False
+        return super()._grad_fusion_enabled(backend)
+
     def set_backend(self, backend, nonce, linoff):
         ECArtificialViscosity.validate_config(self.cfg)
 
