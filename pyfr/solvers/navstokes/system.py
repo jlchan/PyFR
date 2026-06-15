@@ -17,20 +17,24 @@ class NavierStokesSystem(BaseAdvectionDiffusionSystem):
     mpiinterscls = NavierStokesMPIInters
     bbcinterscls = NavierStokesBaseBCInters
 
-    _shock_capturing_modes = (
-        BaseAdvectionDiffusionSystem._shock_capturing_modes |
-        {'ec-artificial-viscosity'}
-    )
-
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
         comm, rank, root = get_comm_rank_root()
         shock_capturing = self.cfg.get('solver', 'shock-capturing', 'none')
+        ecav_enabled = ECArtificialViscosity.enabled(self.cfg)
+
+        if shock_capturing == 'artificial-viscosity' and ecav_enabled:
+            raise ValueError(
+                'shock-capturing = artificial-viscosity is incompatible '
+                'with [solver-ec-artificial-viscosity] enabled = true'
+            )
+
         if rank == root:
             print(f'Running with shock-capturing = {shock_capturing}')
+            print(f'EC artificial viscosity enabled = {ecav_enabled}')
 
-        if shock_capturing == 'ec-artificial-viscosity':
+        if ecav_enabled:
             self._ec_av = True
             self._av = ArtificialViscosity(
                 self.backend, self.cfg, self.mesh, self.ele_map,

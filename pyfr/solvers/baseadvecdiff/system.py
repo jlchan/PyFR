@@ -75,7 +75,7 @@ class BaseAdvectionDiffusionSystem(BaseAdvectionSystem):
         if self._ef:
             self._ef.add_to_graph_pre_recv(g_soln, k, m)
         # Artificial viscosity (legacy sensor: full early exchange in g_soln)
-        elif self._av and not self._ec_av:
+        if self._av and not self._ec_av:
             self._av.add_to_graph_pre_recv(g_soln, k, m)
 
         # Pack and send these interpolated solutions to our neighbours
@@ -114,7 +114,7 @@ class BaseAdvectionDiffusionSystem(BaseAdvectionSystem):
         if self._av and not self._ec_av:
             self._av.add_to_graph_post_recv(g_grad_flux, k, deps)
         # EF: unpack and compute comm_entropy at MPI interfaces
-        elif self._ef:
+        if self._ef:
             self._ef.add_to_graph_post_recv(g_grad_flux, k, deps)
 
         # Entropy-variable path: U -> V before gradient operators

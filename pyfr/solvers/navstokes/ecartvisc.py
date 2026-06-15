@@ -13,21 +13,20 @@ class ECArtificialViscosity:
         if cfg.get('solver', 'gradient-variables', 'conservative') == 'entropy':
             raise ValueError(
                 'gradient-variables = entropy is no longer supported; '
-                'use shock-capturing = ec-artificial-viscosity'
+                'use [solver-ec-artificial-viscosity] enabled = true'
             )
 
     @classmethod
     def enabled(cls, cfg):
         cls.validate_config(cfg)
-        return (cfg.get('solver', 'shock-capturing', 'none') ==
-                'ec-artificial-viscosity')
+        return cfg.getbool('solver-ec-artificial-viscosity', 'enabled', False)
 
     @classmethod
     def setup_elements(cls, eles, nonce):
         if 'flux' in eles.antialias:
             raise ValueError(
-                'shock-capturing = ec-artificial-viscosity is incompatible '
-                'with flux anti-aliasing'
+                '[solver-ec-artificial-viscosity] enabled = true is '
+                'incompatible with flux anti-aliasing'
             )
 
         be = eles._be

@@ -1,7 +1,5 @@
 <%namespace module='pyfr.backends.base.makoutil' name='pyfr'/>
 
-<% av_active = shock_capturing in ('artificial-viscosity', 'ec-artificial-viscosity') %>
-
 <%pyfr:macro name='interp_artvisc' params='V, x, av'>
 % if av_active:
     av = ${interp_expr};

@@ -1,6 +1,22 @@
 <%inherit file='base'/>
 <%namespace module='pyfr.backends.base.makoutil' name='pyfr'/>
 <%include file='pyfr.solvers.euler.kernels.entropy'/>
+<%
+if rho_p_only:
+    bounds_violated = f'dmin < {d_min} || pmin < {p_min}'
+    point_violated = f'd < {d_min} || p < {p_min}'
+    fallback_vars = [('d', d_min), ('p', p_min)]
+else:
+    bounds_violated = (
+        f'dmin < {d_min} || pmin < {p_min} || emin < entmin - {e_tol}'
+    )
+    point_violated = (
+        f'd < {d_min} || p < {p_min} || e < entmin - {e_tol}'
+    )
+    fallback_vars = [
+        ('d', d_min), ('p', p_min), ('e', f'entmin - {e_tol}')
+    ]
+%>
 
 <%pyfr:macro name='get_minima' params='u, m0, dmin, pmin, emin'>
     fpdtype_t d, p, e;
@@ -110,7 +126,7 @@
 
     // Filter if out of bounds
     % if not linearise:
-    if (dmin < ${d_min} || pmin < ${p_min} || emin < entmin - ${e_tol})
+    if (${bounds_violated})
     {
         // Compute modal basis
         fpdtype_t umodes[${nupts}][${nvars}];
@@ -142,7 +158,7 @@
             ${pyfr.expand('apply_filter_single', 'up', 'f', 'd', 'p', 'e')};
 
             // Update f if constraints aren't satisfied
-            if (d < ${d_min} || p < ${p_min} || e < entmin - ${e_tol})
+            if (${point_violated})
             {
                 // Set root-finding interval
                 f_high = f;
@@ -158,7 +174,7 @@
                     ${pyfr.expand('apply_filter_single', 'up', 'fnew', 'd', 'p', 'e')};
 
                     // Update brackets
-                    if (d < ${d_min} || p < ${p_min} || e < entmin - ${e_tol})
+                    if (${point_violated})
                         f_high = fnew;
                     else
                         f_low = fnew;
@@ -178,7 +194,7 @@
         duavg[${vidx}] = uavg[${vidx}] - ${pyfr.dot('mean_wts[{k}]', f'u[{{k}}][{vidx}]', k=nupts)};
         % endfor
 
-        %for uidx, vidx in pyfr.ndrange(nupts, nvars):
+        % for uidx, vidx in pyfr.ndrange(nupts, nvars):
         u[${uidx}][${vidx}] += duavg[${vidx}];
         % endfor
 
@@ -188,14 +204,18 @@
     % endif
 
     // Apply linearised limiting
-    if (dmin < ${d_min} || pmin < ${p_min} || emin < entmin - ${e_tol})
+    if (${bounds_violated})
     {
         fpdtype_t davg, pavg, eavg;
         ${pyfr.expand('compute_entropy', 'uavg', 'davg', 'pavg', 'eavg')};
 
+% if rho_p_only:
+        // Apply density and pressure limiting sequentially
+% else:
         // Apply density, pressure, and entropy limiting sequentially
+% endif
         fpdtype_t alpha;
-        % for (fvar, bound) in [('d', d_min), ('p', p_min), ('e', f'entmin - {e_tol}')]:
+        % for (fvar, bound) in fallback_vars:
         if (${fvar}min < ${bound})
         {
             alpha = (${fvar}min - (${bound}))/(${fvar}min - ${fvar}avg);

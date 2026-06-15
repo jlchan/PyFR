@@ -83,7 +83,7 @@ class EntropyFilter:
 
         if form == 'linearised':
             return None, None
-        elif form == 'nonlinear':
+        elif form in ('nonlinear', 'rho_p'):
             invvdm = be.const_matrix(eles.basis.ubasis.invvdm.T)
             vdm = eles.basis.ubasis.vdm.T
 
@@ -113,6 +113,7 @@ class EntropyFilter:
             'f_tol': cfg.getfloat('solver-entropy-filter', 'f-tol', 1e-4),
             'niters': cfg.getfloat('solver-entropy-filter', 'niters', 2),
             'linearise': form == 'linearised',
+            'rho_p_only': form == 'rho_p',
             'ubdegs': [int(max(dd)) for dd in ub.degrees],
         }
 

@@ -73,10 +73,15 @@ class NavierStokesElements(BaseFluidElements, BaseAdvectionDiffusionElements):
         self._be.pointwise.register(f'{kprefix}.tflux')
 
         # Handle shock capturing and Sutherland's law
-        shock_capturing = self.cfg.get('solver', 'shock-capturing')
+        shock_capturing = self.cfg.get('solver', 'shock-capturing', 'none')
         visc_corr = self.cfg.get('solver', 'viscosity-correction', 'none')
         if visc_corr not in {'sutherland', 'none'}:
             raise ValueError('Invalid viscosity-correction option')
+
+        av_active = (
+            shock_capturing == 'artificial-viscosity'
+            or ECArtificialViscosity.enabled(self.cfg)
+        )
 
         # Template parameters for the flux kernels
         tplargs = {
@@ -86,7 +91,7 @@ class NavierStokesElements(BaseFluidElements, BaseAdvectionDiffusionElements):
             'c': self.cfg.items_as('constants', float),
             'jac_exprs': self.basis.jac_exprs,
             'interp_expr': self.basis.interp_expr,
-            'shock_capturing': shock_capturing,
+            'av_active': av_active,
             'visc_corr': visc_corr
         }
 
