@@ -1,0 +1,27 @@
+# PyFR mesh and solution files
+*.pyfrs
+*.pyfrm
+
+# VTK export
+*.vtu
+
+# CSV files
+*.csv
+
+# Simulation output directories
+*-run/
+
+# Generated structured meshes (regenerate with gen_*.py in each case)
+2d-KHZ/kh.msh
+2d-KHZ/kh-coarse.msh
+2d-gaussian-pulse/gaussian-pulse-quad.msh
+
+# Mac OS X junk
+.DS_Store
+
+# Backup files
+*~
+
+# Hidden files (keep this .gitignore trackable)
+.*
+!.gitignore
