@@ -2,7 +2,8 @@
 
 Periodic KH test on `[-0.5, 0.5]²`, adapted from
 [raj-brown/PyFR `2d-KHZ`](https://github.com/raj-brown/PyFR/tree/develop/PyFR-Test-Cases/2d-KHZ)
-for **entropy-conservative artificial viscosity** (`shock-capturing = ec-artificial-viscosity`).
+for **entropy-conservative artificial viscosity**
+(``[solver-ec-artificial-viscosity] enabled = true``).
 
 ## Files
 
@@ -21,12 +22,14 @@ The upstream case uses `system = euler` and `shock-capturing = entropy-filter`.
 This copy uses:
 
 - `system = navier-stokes` — ECAV is Navier–Stokes only
-- `shock-capturing = ec-artificial-viscosity`
+- `shock-capturing = none`
+- `[solver-ec-artificial-viscosity] enabled = true`
 - `soln-pts` / `flux-pts = gauss-legendre-lobatto` — required for ECAV
 - No flux anti-aliasing (`quad-deg` / `quad-pts` removed; incompatible with ECAV)
 - `mu = 1e-4`, `Pr = 0.72` — small viscosity (near-inviscid KH)
 
-Entropy filter and ECAV cannot be combined in a single config today.
+Entropy filter and ECAV can be combined in a single config (see
+`2d-gaussian-pulse/gaussian-pulse-entropy.ini`); this case uses ECAV only.
 
 ## Run
 
