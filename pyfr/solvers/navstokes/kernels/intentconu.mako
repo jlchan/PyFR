@@ -14,9 +14,9 @@
 
 % for i in range(nvars):
 % if c['ldg-beta'] == -0.5:
-    ulout[${i}] = urout[${i}] = vl[${i}];
+    urout[${i}] = vl[${i}];
 % elif c['ldg-beta'] == 0.5:
-    ulout[${i}] = urout[${i}] = vr[${i}];
+    ulout[${i}] = vr[${i}];
 % else:
     ulout[${i}] = urout[${i}] = vr[${i}]*${0.5 + c['ldg-beta']}
                               + vl[${i}]*${0.5 - c['ldg-beta']};

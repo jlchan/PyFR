@@ -89,7 +89,10 @@ class BaseAdvectionDiffusionSystem(BaseAdvectionSystem):
 
         for l in k['eles/copy_fpts']:
             g_soln.add(l, deps=deps(l, 'eles/disu'))
-        kdeps = k['eles/copy_fpts'] or k['eles/disu']
+        for l in k['eles/con_to_ent_fpts']:
+            g_soln.add(l, deps=deps(l, 'eles/disu'))
+        kdeps = (k['eles/con_to_ent_fpts'] or k['eles/copy_fpts']
+                 or k['eles/disu'])
         g_soln.add_all(k['iint/con_u'],
                        deps=kdeps + k['mpiint/scal_fpts_pack'])
         g_soln.add_all(k['bcint/con_u'], deps=kdeps)
@@ -311,7 +314,10 @@ class BaseAdvectionDiffusionSystem(BaseAdvectionSystem):
         # Compute the common solution at our internal/boundary interfaces
         for l in k['eles/copy_fpts']:
             g_soln.add(l, deps=deps(l, 'eles/disu'))
-        kdeps = k['eles/copy_fpts'] or k['eles/disu']
+        for l in k['eles/con_to_ent_fpts']:
+            g_soln.add(l, deps=deps(l, 'eles/disu'))
+        kdeps = (k['eles/con_to_ent_fpts'] or k['eles/copy_fpts']
+                 or k['eles/disu'])
         g_soln.add_all(k['iint/con_u'], deps=kdeps)
         g_soln.add_all(k['bcint/con_u'], deps=kdeps)
 
