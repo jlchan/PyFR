@@ -113,7 +113,7 @@ class ECArtificialViscosity:
                         uin=s(eles.scal_upts[uin], rgn),
                         gradv=s(eles._grad_upts, rgn),
                         wts=s(eles._ecav_wts_upts, rgn),
-                        diss=eles._ecav_diss,
+                        diss=s(eles._ecav_diss, rgn),
                     )
                     for rgn, n in diss_rgn
                 )
@@ -206,7 +206,7 @@ class ECArtificialViscosity:
                         dims=[eles.nfpts, n],
                         uin=s(eles._scal_fpts, rgn),
                         qnorm=s(eles._ecav_qnorm_fpts, rgn),
-                        surf=eles._ecav_surf,
+                        surf=s(eles._ecav_surf, rgn),
                     )
                     for rgn, n in resid_rgn
                 )
@@ -219,7 +219,7 @@ class ECArtificialViscosity:
                         uin=s(eles.scal_upts[uin], rgn),
                         gradv=s(eles._ecav_grad_upts, rgn),
                         wts=s(eles._ecav_wts_upts, rgn),
-                        vol=eles._ecav_vol,
+                        vol=s(eles._ecav_vol, rgn),
                     )
                     for rgn, n in resid_rgn
                 )
