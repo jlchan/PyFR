@@ -26,6 +26,9 @@ Parameterises the solver with
 
           ``none`` | ``artificial-viscosity`` | ``entropy-filter``
 
+        EC artificial viscosity is configured separately in
+        :ref:`systems/solver-ec-artificial-viscosity`.
+
 2. ``order`` --- order of polynomial solution basis:
 
     *int*

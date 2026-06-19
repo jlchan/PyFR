@@ -466,6 +466,7 @@ well as characteristics of the spatial and temporal schemes to be used.
    systems/solver-time-integrator.rst
    systems/solver-entropy-filter.rst
    systems/solver-artificial-viscosity.rst
+   systems/solver-ec-artificial-viscosity.rst
    systems/solver-interfaces.rst
 
 Boundary and Initial Conditions
