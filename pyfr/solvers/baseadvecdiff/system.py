@@ -99,12 +99,120 @@ class BaseAdvectionDiffusionSystem(BaseAdvectionSystem):
 
         g_soln.commit()
 
+        if self._av and self._ec_av:
+            # Graph 1: ECAV sensor chain and vertex AV produce/send.
+            # vtx_recv completes at graph exit before graph 2 unpack/merge.
+            g_grad_ecav = self.backend.graph()
+            self._av.add_to_graph_ecav_pre_recv(g_grad_ecav, k, m)
+
+            g_grad_ecav.add_all(k['mpiint/scal_fpts_unpack'])
+            for l in k['mpiint/con_u']:
+                g_grad_ecav.add(l, deps=deps(l, 'mpiint/scal_fpts_unpack'))
+
+            if self._ef:
+                self._ef.add_to_graph_post_recv(g_grad_ecav, k, deps)
+
+            for l in k['eles/con_to_ent_upts']:
+                g_grad_ecav.add(l)
+
+            for l in k['eles/ecav_tgradlocal_upts']:
+                g_grad_ecav.add(l, deps=deps(l, 'eles/con_to_ent_upts'))
+            for l in k['eles/ecav_gradlocal_upts']:
+                g_grad_ecav.add(l, deps=deps(l, 'eles/ecav_tgradlocal_upts'))
+
+            if k['eles/con_to_ent_upts']:
+                for l in k['eles/tgradpcoru_upts']:
+                    g_grad_ecav.add(l, deps=deps(l, 'eles/con_to_ent_upts'))
+            else:
+                g_grad_ecav.add_all(k['eles/tgradpcoru_upts'])
+
+            for l in k['eles/tgradcoru_upts']:
+                d = deps(l, 'eles/tgradpcoru_upts') + k['mpiint/con_u']
+                g_grad_ecav.add(l, deps=d)
+
+            for l in k['eles/gradcoru_upts']:
+                g_grad_ecav.add(l, deps=deps(l, 'eles/tgradcoru_upts'))
+
+            for l in k['eles/ecav_visc_ent_diss']:
+                g_grad_ecav.add(l, deps=deps(l, 'eles/gradcoru_upts'))
+
+            for l in k['eles/ecav_volume_integral']:
+                g_grad_ecav.add(l, deps=deps(l, 'eles/ecav_gradlocal_upts'))
+
+            for l in k['eles/ecav_entropy_resid']:
+                g_grad_ecav.add(l, deps=k['eles/ecav_volume_integral'])
+
+            for l in k['eles/ecav_av_scaling']:
+                g_grad_ecav.add(l, deps=(k['eles/ecav_entropy_resid']
+                                        + k['eles/ecav_visc_ent_diss']))
+
+            ecav_deps = (k['eles/gradcoru_upts']
+                         + k['eles/ecav_visc_ent_diss']
+                         + k['eles/ecav_entropy_resid']
+                         + k['eles/ecav_av_scaling'])
+            self._av.add_to_graph_ecav_produce(g_grad_ecav, k, m, ecav_deps)
+            g_grad_ecav.commit()
+
+            # Graph 2: vertex AV merge/fill and flux path. Graph 1 completion
+            # guarantees gradcoru_upts and completed vtx MPI before unpack.
+            g_grad_flux = self.backend.graph()
+            g_grad_flux.add_mpi_reqs(m['vect_fpts_recv'])
+            self._av.add_to_graph_ecav_post_recv(g_grad_flux, k, deps)
+
+            for l in k['eles/ent_to_con_grad_upts']:
+                g_grad_flux.add(l)
+
+            for l in k['eles/tdisf_fused']:
+                g_grad_flux.add(l, deps=k['eles/avfill'])
+
+            for l in k['eles/gradcoru_fpts']:
+                if k['eles/ent_to_con_grad_upts']:
+                    ldeps = deps(l, 'eles/tdisf_fused',
+                                 'eles/ent_to_con_grad_upts')
+                else:
+                    ldeps = deps(l, 'eles/tdisf_fused')
+                g_grad_flux.add(l, deps=ldeps)
+
+            ideps = k['eles/gradcoru_fpts'] or k['eles/tdisf_fused']
+
+            g_grad_flux.add_all(k['mpiint/vect_fpts_pack'], deps=ideps)
+            for send, pack in zip(m['vect_fpts_send'],
+                                  k['mpiint/vect_fpts_pack']):
+                g_grad_flux.add_mpi_req(send, deps=[pack])
+
+            g_grad_flux.add_all(k['iint/comm_flux'],
+                                deps=ideps + k['eles/avfill'],
+                                pdeps=k['mpiint/vect_fpts_pack'])
+            g_grad_flux.add_all(k['bcint/comm_flux'],
+                                deps=ideps + k['eles/avfill'])
+
+            for l in k['eles/gradcoru_qpts']:
+                g_grad_flux.add(l, deps=[],
+                                pdeps=k['mpiint/vect_fpts_pack'])
+
+            g_grad_flux.add_all(k['eles/qptsu'])
+
+            for l in k['eles/tdisf']:
+                if k['eles/qptsu']:
+                    ldeps = deps(l, 'eles/gradcoru_qpts', 'eles/qptsu')
+                elif k['eles/gradcoru_fpts']:
+                    ldeps = deps(l, 'eles/gradcoru_fpts')
+                else:
+                    ldeps = []
+                g_grad_flux.add(l, deps=ldeps + k['eles/avfill'])
+
+            for l in k['eles/tdivtpcorf']:
+                d = deps(l, 'eles/tdisf', 'eles/tdisf_fused')
+                g_grad_flux.add(l, deps=d)
+
+            g_grad_flux.commit()
+
+            g_mpi_flux = self._rhs_mpi_flux_graph(k, deps)
+            return g_soln, g_grad_ecav, g_grad_flux, g_mpi_flux
+
         # Graph: compute gradients, flux, and partial divergence
         g_grad_flux = self.backend.graph()
         g_grad_flux.add_mpi_reqs(m['vect_fpts_recv'])
-        # EC AV: post vertex receives early in this graph (send is late, after gradcoru_upts)
-        if self._av and self._ec_av:
-            self._av.add_to_graph_ecav_pre_recv(g_grad_flux, k, m)
 
         # Unpack MPI face data (may be empty when unpack is a no-op)
         g_grad_flux.add_all(k['mpiint/scal_fpts_unpack'])
@@ -159,22 +267,9 @@ class BaseAdvectionDiffusionSystem(BaseAdvectionSystem):
             g_grad_flux.add(l, deps=(k['eles/ecav_entropy_resid']
                                     + k['eles/ecav_visc_ent_diss']))
 
-        # EC AV: produce and fill after entropy gradients are available
-        if self._av and self._ec_av:
-            ecav_deps = (k['eles/gradcoru_upts']
-                         + k['eles/ecav_visc_ent_diss']
-                         + k['eles/ecav_entropy_resid']
-                         + k['eles/ecav_av_scaling'])
-            self._av.add_to_graph_ecav_produce(
-                g_grad_flux, k, m, ecav_deps
-            )
-            self._av.add_to_graph_ecav_post_recv(g_grad_flux, k, deps)
-
         # Optional NS-only gradient transform (in-place between gradcoru_upts and faces)
         for l in k['eles/ent_to_con_grad_upts']:
             d = deps(l, 'eles/gradcoru_upts')
-            if self._ec_av:
-                d = d + k['eles/avfill'] + k['eles/ecav_entropy_resid']
             g_grad_flux.add(l, deps=d)
 
         # Compute the fused transformed flux and corrected gradient
@@ -265,6 +360,10 @@ class BaseAdvectionDiffusionSystem(BaseAdvectionSystem):
 
         g_grad_flux.commit()
 
+        g_mpi_flux = self._rhs_mpi_flux_graph(k, deps)
+        return g_soln, g_grad_flux, g_mpi_flux
+
+    def _rhs_mpi_flux_graph(self, k, deps):
         # Graph: receive MPI gradients, compute MPI flux and divergence
         g_mpi_flux = self.backend.graph()
 
@@ -288,8 +387,7 @@ class BaseAdvectionDiffusionSystem(BaseAdvectionSystem):
             self._group(g_mpi_flux, [k1, k2])
 
         g_mpi_flux.commit()
-
-        return g_soln, g_grad_flux, g_mpi_flux
+        return g_mpi_flux
 
     @memoize
     def _compute_grads_graph(self, uinbank):
