@@ -2,15 +2,40 @@
 <%namespace module='pyfr.backends.base.makoutil' name='pyfr'/>
 <%include file='pyfr.solvers.navstokes.kernels.entgrad_common'/>
 <%namespace file='pyfr.solvers.navstokes.kernels.entgrad_common' name='egrad'/>
+<%include file='pyfr.solvers.baseadvec.kernels.smats'/>
+<%include file='pyfr.solvers.baseadvecdiff.kernels.transform_grad'/>
 
-// Calculate both the viscous entropy dissipation from physical ∇V, then 
-// perform an in-place conversion of the same field to conservative ∇U.
+<% smats = 'smats_l' if 'linear' in ktype else 'smats' %>
+<% rcpdjac = 'rcpdjac_l' if 'linear' in ktype else 'rcpdjac' %>
+
+// Viscous entropy dissipation from physical ∇V, then in-place ∇V→∇U.
+// gradu holds reference-space corrected gradients on entry.
 <%pyfr:kernel name='ecav_visc_ent_diss_grad' ndim='2'
               uin='in fpdtype_t[${str(nvars)}]'
               gradu='inout fpdtype_t[${str(ndims)}][${str(nvars)}]'
               wts='in fpdtype_t'
+              smats='in fpdtype_t[${str(ndims)}][${str(ndims)}]'
+              rcpdjac='in fpdtype_t'
+              verts='in broadcast-col fpdtype_t[${str(nverts)}][${str(ndims)}]'
+              upts='in broadcast-row fpdtype_t[${str(ndims)}]'
               diss='out broadcast-col reduce(sum) fpdtype_t[1]'>
+% if 'linear' in ktype:
+    // Compute the S matrices
+    fpdtype_t ${smats}[${ndims}][${ndims}], djac;
+    ${pyfr.expand('calc_smats_detj', 'verts', 'upts', smats, 'djac')};
+    fpdtype_t ${rcpdjac} = 1 / djac;
+% endif
+
     ${egrad.ent_to_con_thermo()}
+
+    fpdtype_t physgrad[${ndims}][${nvars}];
+% for i in range(ndims):
+% for j in range(nvars):
+    physgrad[${i}][${j}] = gradu[${i}][${j}];
+% endfor
+% endfor
+
+    ${pyfr.expand('transform_grad', 'physgrad', smats, rcpdjac)};
 
     fpdtype_t node_diss = 0.0;
 
@@ -18,7 +43,7 @@
     {
         fpdtype_t dw[${nvars}];
     % for j in range(nvars):
-        dw[${j}] = gradu[i][${j}];
+        dw[${j}] = physgrad[i][${j}];
     % endfor
 
     % if ndims == 2:

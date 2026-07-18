@@ -123,8 +123,6 @@ class BaseAdvectionDiffusionSystem(BaseAdvectionSystem):
 
             for l in k['eles/ecav_tgradlocal_upts']:
                 g_grad_ecav.add(l, deps=deps(l, 'eles/con_to_ent_upts'))
-            for l in k['eles/ecav_gradlocal_upts']:
-                g_grad_ecav.add(l, deps=deps(l, 'eles/ecav_tgradlocal_upts'))
 
             if k['eles/con_to_ent_upts']:
                 for l in k['eles/tgradpcoru_upts']:
@@ -136,14 +134,11 @@ class BaseAdvectionDiffusionSystem(BaseAdvectionSystem):
                 d = deps(l, 'eles/tgradpcoru_upts') + k['mpiint/con_u']
                 g_grad_ecav.add(l, deps=d)
 
-            for l in k['eles/gradcoru_upts']:
+            for l in k['eles/ecav_visc_ent_diss_grad']:
                 g_grad_ecav.add(l, deps=deps(l, 'eles/tgradcoru_upts'))
 
-            for l in k['eles/ecav_visc_ent_diss_grad']:
-                g_grad_ecav.add(l, deps=deps(l, 'eles/gradcoru_upts'))
-
             for l in k['eles/ecav_volume_integral']:
-                g_grad_ecav.add(l, deps=deps(l, 'eles/ecav_gradlocal_upts'))
+                g_grad_ecav.add(l, deps=deps(l, 'eles/ecav_tgradlocal_upts'))
 
             for l in k['eles/gradcoru_fpts']:
                 g_grad_ecav.add(l, deps=deps(l, 'eles/ecav_visc_ent_diss_grad'))
