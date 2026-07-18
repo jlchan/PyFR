@@ -43,7 +43,7 @@ At boundary faces, PyFR:
    (``rho_p * u``, ``rho_p * v``, …).
 
 2. Recovers physical entropy-variable gradients, then maps them back to
-   conservative gradients (``ent_to_con_grad``) before face flux
+   conservative gradients (``ecav_visc_ent_diss_grad``) before face flux
    assembly.
 
 3. Assembles the boundary viscous flux through ``ghost-imperm`` using

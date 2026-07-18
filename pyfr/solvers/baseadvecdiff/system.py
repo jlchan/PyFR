@@ -133,7 +133,7 @@ class BaseAdvectionDiffusionSystem(BaseAdvectionSystem):
             for l in k['eles/gradcoru_upts']:
                 g_grad_ecav.add(l, deps=deps(l, 'eles/tgradcoru_upts'))
 
-            for l in k['eles/ecav_visc_ent_diss']:
+            for l in k['eles/ecav_visc_ent_diss_grad']:
                 g_grad_ecav.add(l, deps=deps(l, 'eles/gradcoru_upts'))
 
             for l in k['eles/ecav_volume_integral']:
@@ -144,10 +144,10 @@ class BaseAdvectionDiffusionSystem(BaseAdvectionSystem):
 
             for l in k['eles/ecav_av_scaling']:
                 g_grad_ecav.add(l, deps=(k['eles/ecav_entropy_resid']
-                                        + k['eles/ecav_visc_ent_diss']))
+                                        + k['eles/ecav_visc_ent_diss_grad']))
 
             ecav_deps = (k['eles/gradcoru_upts']
-                         + k['eles/ecav_visc_ent_diss']
+                         + k['eles/ecav_visc_ent_diss_grad']
                          + k['eles/ecav_entropy_resid']
                          + k['eles/ecav_av_scaling'])
             self._av.add_to_graph_ecav_produce(g_grad_ecav, k, m, ecav_deps)
@@ -159,18 +159,11 @@ class BaseAdvectionDiffusionSystem(BaseAdvectionSystem):
             g_grad_flux.add_mpi_reqs(m['vect_fpts_recv'])
             self._av.add_to_graph_ecav_post_recv(g_grad_flux, k, deps)
 
-            for l in k['eles/ent_to_con_grad_upts']:
-                g_grad_flux.add(l)
-
             for l in k['eles/tdisf_fused']:
                 g_grad_flux.add(l, deps=k['eles/avfill'])
 
             for l in k['eles/gradcoru_fpts']:
-                if k['eles/ent_to_con_grad_upts']:
-                    ldeps = deps(l, 'eles/tdisf_fused',
-                                 'eles/ent_to_con_grad_upts')
-                else:
-                    ldeps = deps(l, 'eles/tdisf_fused')
+                ldeps = deps(l, 'eles/tdisf_fused')
                 g_grad_flux.add(l, deps=ldeps)
 
             ideps = k['eles/gradcoru_fpts'] or k['eles/tdisf_fused']
@@ -254,7 +247,7 @@ class BaseAdvectionDiffusionSystem(BaseAdvectionSystem):
         for l in k['eles/gradcoru_upts']:
             g_grad_flux.add(l, deps=deps(l, 'eles/tgradcoru_upts'))
 
-        for l in k['eles/ecav_visc_ent_diss']:
+        for l in k['eles/ecav_visc_ent_diss_grad']:
             g_grad_flux.add(l, deps=deps(l, 'eles/gradcoru_upts'))
 
         for l in k['eles/ecav_volume_integral']:
@@ -265,9 +258,10 @@ class BaseAdvectionDiffusionSystem(BaseAdvectionSystem):
 
         for l in k['eles/ecav_av_scaling']:
             g_grad_flux.add(l, deps=(k['eles/ecav_entropy_resid']
-                                    + k['eles/ecav_visc_ent_diss']))
+                                    + k['eles/ecav_visc_ent_diss_grad']))
 
-        # Optional NS-only gradient transform (in-place between gradcoru_upts and faces)
+        # Optional NS-only gradient transform (in-place between gradcoru_upts
+        # and faces; fused into ecav_visc_ent_diss_grad when ECAV is active)
         for l in k['eles/ent_to_con_grad_upts']:
             d = deps(l, 'eles/gradcoru_upts')
             g_grad_flux.add(l, deps=d)

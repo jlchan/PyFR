@@ -87,7 +87,7 @@ class ECArtificialViscosity:
         wts_np = (r.wts[:, None] / eles.rcpdjac_at_np('upts')).astype(fpdtype)
         eles._ecav_wts_upts = be.const_matrix(wts_np, tags={'align'})
 
-        be.pointwise.register(f'{kprefix}.ecav_visc_ent_diss')
+        be.pointwise.register(f'{kprefix}.ecav_visc_ent_diss_grad')
 
         tplargs = {
             'ndims': eles.ndims,
@@ -105,20 +105,20 @@ class ECArtificialViscosity:
             diss_rgn.append((rgn, r[rgn]))
 
         if diss_rgn:
-            def ecav_visc_ent_diss_upts(uin):
+            def ecav_visc_ent_diss_grad_upts(uin):
                 return eles._make_sliced_kernel(
                     be.kernel(
-                        'ecav_visc_ent_diss', tplargs=tplargs,
+                        'ecav_visc_ent_diss_grad', tplargs=tplargs,
                         dims=[eles.nupts, n],
                         uin=s(eles.scal_upts[uin], rgn),
-                        gradv=s(eles._grad_upts, rgn),
+                        gradu=s(eles._grad_upts, rgn),
                         wts=s(eles._ecav_wts_upts, rgn),
                         diss=s(eles._ecav_diss, rgn),
                     )
                     for rgn, n in diss_rgn
                 )
 
-            eles.kernels['ecav_visc_ent_diss'] = ecav_visc_ent_diss_upts
+            eles.kernels['ecav_visc_ent_diss_grad'] = ecav_visc_ent_diss_grad_upts
 
     @classmethod
     def _setup_ecav_local_grad(cls, eles):
@@ -295,20 +295,17 @@ class ECArtificialViscosity:
         c = eles.cfg.items_as('constants', float)
 
         be.pointwise.register(f'{kprefix}.con_to_ent')
-        be.pointwise.register(f'{kprefix}.ent_to_con_grad')
 
         ent_tplargs = {'ndims': eles.ndims, 'nvars': eles.nvars, 'c': c}
-        tplargs_e2c = dict(ent_tplargs)
 
         r, s = eles.mesh_regions, eles._slice_mat
-        ent_u, ent_f, ent_to_con_grad_u = [], [], []
+        ent_u, ent_f = [], []
         ldg_beta = eles.cfg.getfloat('solver-interfaces', 'ldg-beta')
 
         for rgn in ('curved', 'linear'):
             if rgn not in r:
                 continue
             ent_u.append((rgn, r[rgn]))
-            ent_to_con_grad_u.append((rgn, r[rgn]))
             if abs(ldg_beta) == 0.5:
                 ent_f.append((rgn, r[rgn]))
 
@@ -339,17 +336,3 @@ class ECArtificialViscosity:
                 )
 
             eles.kernels['con_to_ent_fpts'] = con_to_ent_fpts
-
-        if ent_to_con_grad_u:
-            def ent_to_con_grad_upts(uin):
-                return eles._make_sliced_kernel(
-                    be.kernel(
-                        'ent_to_con_grad', tplargs=tplargs_e2c,
-                        dims=[eles.nupts, n],
-                        uin=s(eles.scal_upts[uin], rgn),
-                        gradu=s(eles._grad_upts, rgn),
-                    )
-                    for rgn, n in ent_to_con_grad_u
-                )
-
-            eles.kernels['ent_to_con_grad_upts'] = ent_to_con_grad_upts
