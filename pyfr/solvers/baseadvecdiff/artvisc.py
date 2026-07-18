@@ -44,7 +44,7 @@ class ArtificialViscosity:
             backend.pointwise.register(f'{kprefix}.shocksensor')
         else:
             backend.pointwise.register(
-                'pyfr.solvers.navstokes.kernels.ecav_to_vtx'
+                'pyfr.solvers.navstokes.kernels.ecav_resid_av_to_vtx'
             )
         backend.pointwise.register(f'{kprefix}.avfill')
 
@@ -58,7 +58,8 @@ class ArtificialViscosity:
 
     @property
     def producer_key(self):
-        return 'shocksensor' if self._producer == 'sensor' else 'ecav_to_vtx'
+        return ('shocksensor' if self._producer == 'sensor'
+                else 'ecav_resid_av_to_vtx')
 
     def _setup_etype(self, etype, eles, mesh, c_av):
         be = self._be
@@ -131,18 +132,48 @@ class ArtificialViscosity:
                     u=eles.scal_upts[uin], vtx=eles.vtx_view
                 )
         else:
-            if not hasattr(eles, '_av_scaling_ele_view'):
-                mat = eles._av_scaling
+            fpdtype = be.fpdtype
+            tplargs_ecav = {
+                'nverts': nverts,
+                'eps': float(np.finfo(fpdtype).eps),
+            }
+
+            def _ensure_ecav_producer_views():
+                if hasattr(eles, '_ecav_surf_ele_view'):
+                    return
+                mat_surf = eles._ecav_surf
+                mat_vol = eles._ecav_vol
+                mat_diss = eles._ecav_diss
+                mat_av = eles._av_scaling
+                eles._ecav_surf_ele_view = be.view(
+                    np.full(eles.neles, mat_surf.mid),
+                    np.zeros(eles.neles, dtype=int),
+                    np.arange(eles.neles),
+                )
+                eles._ecav_vol_ele_view = be.view(
+                    np.full(eles.neles, mat_vol.mid),
+                    np.zeros(eles.neles, dtype=int),
+                    np.arange(eles.neles),
+                )
+                eles._ecav_diss_ele_view = be.view(
+                    np.full(eles.neles, mat_diss.mid),
+                    np.zeros(eles.neles, dtype=int),
+                    np.arange(eles.neles),
+                )
                 eles._av_scaling_ele_view = be.view(
-                    np.full(eles.neles, mat.mid),
+                    np.full(eles.neles, mat_av.mid),
                     np.zeros(eles.neles, dtype=int),
                     np.arange(eles.neles),
                 )
 
             def producer_kern():
+                _ensure_ecav_producer_views()
                 return be.kernel(
-                    'ecav_to_vtx', tplargs={'nverts': nverts},
+                    'ecav_resid_av_to_vtx', tplargs=tplargs_ecav,
                     dims=[eles.neles],
+                    surf=eles._ecav_surf_ele_view,
+                    vol=eles._ecav_vol_ele_view,
+                    diss=eles._ecav_diss_ele_view,
                     av_scaling=eles._av_scaling_ele_view,
                     vtx=eles.vtx_view,
                 )
@@ -281,11 +312,11 @@ class ArtificialViscosity:
 
     def add_to_graph_ecav_pre_recv(self, g, k, m):
         g.add_mpi_reqs(m['vtx_recv'])
+        g.add_all(k['vtx/vtx_zero'])
 
     def add_to_graph_ecav_produce(self, g, k, m, deps):
         pk = f'eles/{self.producer_key}'
-        g.add_all(k['vtx/vtx_zero'], deps=deps)
-        g.add_all(k[pk], deps=k['vtx/vtx_zero'])
+        g.add_all(k[pk], deps=k['vtx/vtx_zero'] + deps)
         g.add_all(k['vtx/pack'], deps=k[pk])
         for send, pack in zip(m['vtx_send'], k['vtx/pack']):
             g.add_mpi_req(send, deps=[pack])

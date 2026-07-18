@@ -56,9 +56,6 @@ class ECArtificialViscosity:
         eles._ecav_vol = be.matrix(
             (1, eles.neles), extent=nonce + 'ecav_vol', tags={'align'}
         )
-        eles._ecav_resid = be.matrix(
-            (1, eles.neles), extent=nonce + 'ecav_resid', tags={'align'}
-        )
         eles._ecav_grad_upts = be.matrix(
             (eles.ndims, eles.nupts, eles.nvars, eles.neles),
             extent=nonce + 'ecav_grad_upts', tags={'align'}
@@ -179,9 +176,8 @@ class ECArtificialViscosity:
         eles._ecav_qnorm_fpts = be.const_matrix(qwts_pnorm, tags={'align'})
 
         be.pointwise.register(f'{kprefix}.ecav_surface_integral')
+        be.pointwise.register(f'{kprefix}.ecav_surface_ent_fpts')
         be.pointwise.register(f'{kprefix}.ecav_volume_integral')
-        be.pointwise.register(f'{kprefix}.ecav_entropy_resid')
-        be.pointwise.register(f'{kprefix}.ecav_av_scaling')
 
         tplargs = {
             'ndims': eles.ndims,
@@ -192,6 +188,7 @@ class ECArtificialViscosity:
 
         r, s = eles.mesh_regions, eles._slice_mat
         resid_rgn = []
+        ldg_beta = eles.cfg.getfloat('solver-interfaces', 'ldg-beta')
 
         for rgn in ('curved', 'linear'):
             if rgn not in r:
@@ -211,6 +208,19 @@ class ECArtificialViscosity:
                     for rgn, n in resid_rgn
                 )
 
+            def ecav_surface_ent_fpts(uin):
+                return eles._make_sliced_kernel(
+                    be.kernel(
+                        'ecav_surface_ent_fpts', tplargs=tplargs,
+                        dims=[eles.nfpts, n],
+                        uin=s(eles._scal_fpts, rgn),
+                        qnorm=s(eles._ecav_qnorm_fpts, rgn),
+                        ent=s(eles._ent_comm_fpts, rgn),
+                        surf=s(eles._ecav_surf, rgn),
+                    )
+                    for rgn, n in resid_rgn
+                )
+
             def ecav_volume_integral(uin):
                 return eles._make_sliced_kernel(
                     be.kernel(
@@ -224,69 +234,11 @@ class ECArtificialViscosity:
                     for rgn, n in resid_rgn
                 )
 
-            def _ensure_ecav_ele_views():
-                if hasattr(eles, '_ecav_resid_ele_view'):
-                    return
-                mat_surf = eles._ecav_surf
-                mat_vol = eles._ecav_vol
-                mat_resid = eles._ecav_resid
-                eles._ecav_surf_ele_view = be.view(
-                    np.full(eles.neles, mat_surf.mid),
-                    np.zeros(eles.neles, dtype=int),
-                    np.arange(eles.neles),
-                )
-                eles._ecav_vol_ele_view = be.view(
-                    np.full(eles.neles, mat_vol.mid),
-                    np.zeros(eles.neles, dtype=int),
-                    np.arange(eles.neles),
-                )
-                eles._ecav_resid_ele_view = be.view(
-                    np.full(eles.neles, mat_resid.mid),
-                    np.zeros(eles.neles, dtype=int),
-                    np.arange(eles.neles),
-                )
-
-            def ecav_entropy_resid():
-                _ensure_ecav_ele_views()
-                return be.kernel(
-                    'ecav_entropy_resid', tplargs={},
-                    dims=[eles.neles],
-                    surf=eles._ecav_surf_ele_view,
-                    vol=eles._ecav_vol_ele_view,
-                    resid=eles._ecav_resid_ele_view,
-                )
-
-            tplargs_av = {'eps': float(np.finfo(fpdtype).eps)}
-
-            def ecav_av_scaling():
-                _ensure_ecav_ele_views()
-                if not hasattr(eles, '_ecav_diss_ele_view'):
-                    mat_diss = eles._ecav_diss
-                    eles._ecav_diss_ele_view = be.view(
-                        np.full(eles.neles, mat_diss.mid),
-                        np.zeros(eles.neles, dtype=int),
-                        np.arange(eles.neles),
-                    )
-                if not hasattr(eles, '_av_scaling_ele_view'):
-                    mat_av = eles._av_scaling
-                    eles._av_scaling_ele_view = be.view(
-                        np.full(eles.neles, mat_av.mid),
-                        np.zeros(eles.neles, dtype=int),
-                        np.arange(eles.neles),
-                    )
-
-                return be.kernel(
-                    'ecav_av_scaling', tplargs=tplargs_av,
-                    dims=[eles.neles],
-                    resid=eles._ecav_resid_ele_view,
-                    diss=eles._ecav_diss_ele_view,
-                    av_scaling=eles._av_scaling_ele_view,
-                )
-
-            eles.kernels['ecav_surface_integral'] = ecav_surface_integral
             eles.kernels['ecav_volume_integral'] = ecav_volume_integral
-            eles.kernels['ecav_entropy_resid'] = ecav_entropy_resid
-            eles.kernels['ecav_av_scaling'] = ecav_av_scaling
+            if abs(ldg_beta) == 0.5:
+                eles.kernels['ecav_surface_ent_fpts'] = ecav_surface_ent_fpts
+            else:
+                eles.kernels['ecav_surface_integral'] = ecav_surface_integral
 
     @classmethod
     def _setup_entropy_kernels(cls, eles):
@@ -324,6 +276,7 @@ class ECArtificialViscosity:
             eles.kernels['con_to_ent_upts'] = con_to_ent_upts
 
         if ent_f:
+            # Used only by the plugin-specific compute_grads() path.
             def con_to_ent_fpts():
                 return eles._make_sliced_kernel(
                     be.kernel(
