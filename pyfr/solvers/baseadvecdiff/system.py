@@ -103,10 +103,13 @@ class BaseAdvectionDiffusionSystem(BaseAdvectionSystem):
         g_soln.commit()
 
         if self._av and self._ec_av:
-            # Graph 1: ECAV sensor chain and vertex AV produce/send.
-            # vtx_recv completes at graph exit before graph 2 unpack/merge.
+            # Graph 1: ECAV sensor chain, corrected gradients, vector
+            # exchange, and vertex AV produce/send.
+            # vtx_recv and vect_fpts_recv complete at graph exit before
+            # graph 2 unpack/merge.
             g_grad_ecav = self.backend.graph()
             self._av.add_to_graph_ecav_pre_recv(g_grad_ecav, k, m)
+            g_grad_ecav.add_mpi_reqs(m['vect_fpts_recv'])
 
             g_grad_ecav.add_all(k['mpiint/scal_fpts_unpack'])
             for l in k['mpiint/con_u']:
@@ -142,48 +145,39 @@ class BaseAdvectionDiffusionSystem(BaseAdvectionSystem):
             for l in k['eles/ecav_volume_integral']:
                 g_grad_ecav.add(l, deps=deps(l, 'eles/ecav_gradlocal_upts'))
 
+            for l in k['eles/gradcoru_fpts']:
+                g_grad_ecav.add(l, deps=deps(l, 'eles/ecav_visc_ent_diss_grad'))
+
+            g_grad_ecav.add_all(k['mpiint/vect_fpts_pack'],
+                                deps=k['eles/gradcoru_fpts'])
+            for send, pack in zip(m['vect_fpts_send'],
+                                  k['mpiint/vect_fpts_pack']):
+                g_grad_ecav.add_mpi_req(send, deps=[pack])
+
             ecav_deps = (k['eles/ecav_volume_integral']
                          + k['eles/ecav_visc_ent_diss_grad'])
             self._av.add_to_graph_ecav_produce(g_grad_ecav, k, m, ecav_deps)
             g_grad_ecav.commit()
 
             # Graph 2: vertex AV merge/fill and flux path. Graph 1 completion
-            # guarantees gradcoru_upts and completed vtx MPI before unpack.
+            # guarantees gradcoru_fpts, vect MPI, and vtx MPI before unpack.
             g_grad_flux = self.backend.graph()
-            g_grad_flux.add_mpi_reqs(m['vect_fpts_recv'])
             self._av.add_to_graph_ecav_post_recv(g_grad_flux, k, deps)
 
             for l in k['eles/tdisf_fused']:
                 g_grad_flux.add(l, deps=k['eles/avfill'])
 
-            for l in k['eles/gradcoru_fpts']:
-                ldeps = deps(l, 'eles/tdisf_fused')
-                g_grad_flux.add(l, deps=ldeps)
-
-            ideps = k['eles/gradcoru_fpts'] or k['eles/tdisf_fused']
-
-            g_grad_flux.add_all(k['mpiint/vect_fpts_pack'], deps=ideps)
-            for send, pack in zip(m['vect_fpts_send'],
-                                  k['mpiint/vect_fpts_pack']):
-                g_grad_flux.add_mpi_req(send, deps=[pack])
-
-            g_grad_flux.add_all(k['iint/comm_flux'],
-                                deps=ideps + k['eles/avfill'],
-                                pdeps=k['mpiint/vect_fpts_pack'])
-            g_grad_flux.add_all(k['bcint/comm_flux'],
-                                deps=ideps + k['eles/avfill'])
+            g_grad_flux.add_all(k['iint/comm_flux'], deps=k['eles/avfill'])
+            g_grad_flux.add_all(k['bcint/comm_flux'], deps=k['eles/avfill'])
 
             for l in k['eles/gradcoru_qpts']:
-                g_grad_flux.add(l, deps=[],
-                                pdeps=k['mpiint/vect_fpts_pack'])
+                g_grad_flux.add(l)
 
             g_grad_flux.add_all(k['eles/qptsu'])
 
             for l in k['eles/tdisf']:
                 if k['eles/qptsu']:
                     ldeps = deps(l, 'eles/gradcoru_qpts', 'eles/qptsu')
-                elif k['eles/gradcoru_fpts']:
-                    ldeps = deps(l, 'eles/gradcoru_fpts')
                 else:
                     ldeps = []
                 g_grad_flux.add(l, deps=ldeps + k['eles/avfill'])
